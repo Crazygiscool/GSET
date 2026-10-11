@@ -391,7 +391,7 @@ impl<'a> Lowerer<'a> {
             .child_by_field_name("name")
             .map(|n| self.name_of(n))
             .unwrap_or_default();
-        let is_async = child_of_kind(node, "async").is_some();
+        let is_async = has_child_token(node, "async");
         let (params, param_types, variadic) = self.parameters(node);
         let ret = node
             .child_by_field_name("return_type")
@@ -658,6 +658,25 @@ fn child_of_kind<'t>(node: tree_sitter::Node<'t>, kind: &str) -> Option<tree_sit
     named_children(node)
         .into_iter()
         .find(|child| child.kind() == kind)
+}
+
+/// Whether `node` has a direct child token of the given kind.
+///
+/// Unlike [`child_of_kind`], this sees anonymous tokens such as the `async`
+/// keyword, which the grammar stores as a bare string rather than a named node.
+fn has_child_token(node: tree_sitter::Node<'_>, kind: &str) -> bool {
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            if cursor.node().kind() == kind {
+                return true;
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    false
 }
 
 // -------------------------------------------------------------- statements
@@ -1153,7 +1172,7 @@ impl<'a> Lowerer<'a> {
         let Some(iterable) = node.child_by_field_name("right") else {
             return vec![Stmt::error("`for` has no sequence", span)];
         };
-        let is_async = child_of_kind(node, "async").is_some();
+        let is_async = has_child_token(node, "async");
         if is_async {
             self.builder.report(
                 Diagnostic::error(

@@ -49,5 +49,7 @@ mod target;
 mod writer;
 
 pub use backend::{Backend, Emitted, backend_by_name, backend_for, emit};
+pub use python::Python;
 pub use target::{Capability, Support, TargetId};
 pub use writer::CodeWriter;
+mod python;

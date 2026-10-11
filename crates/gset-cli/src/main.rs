@@ -194,6 +194,7 @@ fn runtime_command(target: TargetId) -> Option<ProcessCommand> {
             command.arg("run");
             Some(command)
         }
+        TargetId::PYTHON => Some(ProcessCommand::new("python3")),
         _ => None,
     }
 }
