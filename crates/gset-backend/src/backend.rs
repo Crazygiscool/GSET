@@ -70,6 +70,7 @@ pub fn emit(backend: &dyn Backend, module: &Module, source_map: &SourceMap) -> E
 pub fn backend_for(id: TargetId) -> Option<Box<dyn Backend>> {
     match id {
         TargetId::GO => Some(Box::new(Go)),
+        TargetId::PYTHON => Some(Box::new(crate::python::Python)),
         _ => None,
     }
 }
