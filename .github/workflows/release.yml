@@ -132,18 +132,23 @@ jobs:
           merge-multiple: true
 
       - name: Extract binary
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          rm -rf install
-          mkdir -p install
-          tar -xf win/*.zip -C install
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path install | Out-Null
+          Get-ChildItem -Path win -Filter '*.zip' | ForEach-Object {
+            Expand-Archive -LiteralPath $_.FullName -DestinationPath install -Force
+          }
+          if (-not (Test-Path 'install\gset.exe')) { throw 'gset.exe missing after extraction' }
 
       - name: Install NSIS
         run: choco install nsis -y --no-progress
 
       - name: Install WiX toolset
-        run: dotnet tool install --global wix
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix
+          "$HOME\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build EXE installer (NSIS)
         shell: pwsh
