@@ -35,10 +35,12 @@ output is `gset-<VERSION>-setup.exe`). NSIS accepts the `-D` form everywhere;
 
 ## Building the MSI installer
 
-Requires the WiX Toolset, installed as a .NET global tool (needs a .NET SDK):
+Requires the WiX Toolset, installed as a .NET global tool (needs a .NET SDK).
+Pin v5 - since v7, WiX requires accepting its OSMF (Open Source Maintenance Fee)
+EULA, and this project's `.wxs` is v4/v5 schema:
 
 ```bat
-dotnet tool install --global wix
+dotnet tool install --global wix --version 5.0.2
 wix build packages\windows\gset.wxs ^
        -d Version=3.3.0 ^
        -d Binary=C:\path\to\gset.exe ^
