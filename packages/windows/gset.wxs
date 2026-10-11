@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  GSET Windows installer (MSI), built with the WiX Toolset:
+  GSET Windows installer (MSI), built with the WiX Toolset v5 (pinned; v7+
+  requires accepting the OSMF EULA, and this file uses v4/v5 schema).
 
-      dotnet tool install -g wix --version 5.0.2
+      dotnet tool install -g wix <pin version 5.0.2>
       wix build gset.wxs -d Version=3.3.0 -d Binary=...\gset.exe \
             -d Icon=...\gset.ico -o gset-3.3.0-windows-amd64.msi
 
