@@ -112,8 +112,121 @@ jobs:
           name: ${{ env.OUTPUT_NAME }}
           path: ${{ env.OUTPUT_NAME }}.*
           retention-days: 5
-  release:
+  windows-installers:
     needs: build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gset-windows-amd64
+          path: win
+          merge-multiple: true
+
+      - name: Extract binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf install
+          mkdir -p install
+          tar -xf win/*.zip -C install
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Install WiX toolset
+        run: dotnet tool install --global wix
+
+      - name: Build EXE installer (NSIS)
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $root = "$env:GITHUB_WORKSPACE"
+          makensis "-DVERSION=$version" `
+            "-DBINARY=$root\install\gset.exe" `
+            "-DLICENSE=$root\LICENSE" `
+            "-DICON=$root\packages\windows\gset.ico" `
+            "-DOUT=$root\gset-$version-windows-amd64-setup.exe" `
+            "$root\packages\windows\gset.nsi"
+
+      - name: Smoke test EXE installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $root = "$env:GITHUB_WORKSPACE"
+          $setup = "$root\gset-$version-windows-amd64-setup.exe"
+          $installDir = "$env:ProgramFiles\GSET"
+
+          & $setup /S /ALLUSERS
+          if ($LASTEXITCODE -ne 0) { throw "setup exited $LASTEXITCODE" }
+          if (-not (Test-Path "$installDir\gset.exe")) { throw "gset.exe not installed" }
+
+          $sysPath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
+          if ($sysPath -notmatch [regex]::Escape($installDir)) { throw "system PATH not updated: $sysPath" }
+
+          & "$installDir\gset.exe" version
+          if ($LASTEXITCODE -ne 0) { throw "gset version failed" }
+
+          & "$installDir\Uninstall GSET.exe" /S "_?=$installDir"
+          if (Test-Path "$installDir\gset.exe") { throw "uninstall left gset.exe" }
+          $sysPath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
+          if ($sysPath -match [regex]::Escape($installDir)) { throw "PATH still contains GSET after uninstall" }
+
+      - name: Build MSI installer (WiX)
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $root = "$env:GITHUB_WORKSPACE"
+          wix build "$root\packages\windows\gset.wxs" `
+            -d Version=$version `
+            -d Binary="$root\install\gset.exe" `
+            -d License="$root\LICENSE" `
+            -d Icon="$root\packages\windows\gset.ico" `
+            -o "$root\gset-$version-windows-amd64.msi"
+
+      - name: Smoke test MSI installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $root = "$env:GITHUB_WORKSPACE"
+          $msi = "$root\gset-$version-windows-amd64.msi"
+          $installDir = "$env:ProgramFiles\GSET"
+
+          $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', "/l*v `"$root\msi-install.log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /i failed with $($p.ExitCode)" }
+          if (-not (Test-Path "$installDir\gset.exe")) { throw "MSI did not install gset.exe" }
+          $sysPath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
+          if ($sysPath -notmatch [regex]::Escape($installDir)) { throw "MSI did not update system PATH" }
+
+          $p = Start-Process msiexec.exe -ArgumentList @('/x', "`"$msi`"", '/qn', '/norestart', "/l*v `"$root\msi-uninstall.log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x failed with $($p.ExitCode)" }
+          if (Test-Path "$installDir\gset.exe") { throw "MSI uninstall left gset.exe" }
+
+      - name: Upload EXE installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: gset-windows-installer-exe
+          path: gset-${{ steps.version.outputs.VERSION }}-windows-amd64-setup.exe
+          retention-days: 5
+
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: gset-windows-installer-msi
+          path: gset-${{ steps.version.outputs.VERSION }}-windows-amd64.msi
+          retention-days: 5
+  release:
+    needs: [build, windows-installers]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -147,6 +260,9 @@ jobs:
           ```
           ### Manual Install
           Download the appropriate archive for your platform from the assets below.
+          ### Windows Installers
+          - \`gset-${VERSION}-windows-amd64-setup.exe\` - NSIS setup (all users or just for me)
+          - \`gset-${VERSION}-windows-amd64.msi\` - MSI (all users)
           EOF
 
       - name: Create GitHub Release

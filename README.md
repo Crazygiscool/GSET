@@ -19,6 +19,9 @@
 - **AUR**: `gset` (stable); `gset-git` is deprecated in favor of it
 - **Chocolatey**: `choco install gset`
 - **winget**: `winget install GSETLang.GSET`
+- **Windows (installer)**: download `gset-<version>-windows-amd64-setup.exe`
+  (choose "Install for all users" or "Install just for me") or
+  `gset-<version>-windows-amd64.msi` (all users) from the release assets below.
 
 ## Publishing
 

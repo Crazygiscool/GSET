@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  GSET Windows installer (MSI), built with the WiX Toolset:
+
+      dotnet tool install --global wix
+      wix build gset.wxs -d Version=3.3.0 -d Binary=...\gset.exe \
+            -d Icon=...\gset.ico -o gset-3.3.0-windows-amd64.msi
+
+  The MSI is built per-machine: gset.exe goes to Program Files, is added to
+  the system PATH so `gset` works in any new console, and lands in Add/Remove
+  Programs. Older versions upgrade in place via MajorUpgrade.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="GSET"
+    Manufacturer="GSET Team"
+    Version="$(var.Version)"
+    Language="1033"
+    UpgradeCode="CFF50D80-5BF1-4B8D-969B-CF61D98D452E"
+    Scope="perMachine"
+    Compressed="yes">
+
+    <SummaryInformation Description="Generic Syntax Extension Tool - write in any syntax, compile to any target" />
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of GSET is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="GSET">
+        <Component Id="MainExecutable" Guid="{8B2A2CFB-7E24-41A6-BAC7-0BF53B7F62A7}">
+          <File Id="GsetExe" Source="$(var.Binary)" KeyPath="yes" />
+          <Environment
+            Id="GsetPath"
+            Name="PATH"
+            Value="[INSTALLFOLDER]"
+            Permanent="no"
+            Part="last"
+            Action="set"
+            System="yes" />
+        </Component>
+        <Component Id="LicenseFile" Guid="{27E62DC4-2C97-4D56-9C7B-07B8463E21FB}">
+          <File Id="GsetLicense" Source="$(var.License)" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="GsetProgramMenuFolder" Name="GSET">
+        <Component Id="StartMenuEntries" Guid="{984EFB76-7A29-4FD9-AC71-B3178CA2DBAB}">
+          <Shortcut
+            Id="GsetConsole"
+            Name="GSET Command Prompt"
+            Description="Open a console ready to run gset"
+            Target="[#GsetExe]"
+            WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveGsetProgramMenuFolder" On="uninstall" />
+          <RegistryValue
+            Root="HKCU"
+            Key="Software\GSET"
+            Name="installed"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Property Id="ARPPRODUCTICON" Value="GsetIcon" />
+    <Icon Id="GsetIcon" SourceFile="$(var.Icon)" />
+
+    <Feature Id="MainFeature" Title="GSET" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="LicenseFile" />
+      <ComponentRef Id="StartMenuEntries" />
+    </Feature>
+  </Package>
+</Wix>

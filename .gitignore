@@ -40,6 +40,10 @@ go.work.sum
 # Build output
 dist/
 
+# Windows installer build output
+*.msi
+*.wixpdb
+
 # Rust / cargo build output
 /target/
 
