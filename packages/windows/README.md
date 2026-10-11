@@ -51,6 +51,20 @@ The MSI is per-machine (needs elevation to install), embeds an
 Add/Remove Programs entry and a "GSET Command Prompt" start-menu shortcut, and
 replaces older versions in place via `MajorUpgrade`.
 
+## Local validation
+
+`packages/windows/check-installers.sh` compile-checks both sources without a
+Windows machine, so regressions surface on every push instead of at
+release-tag time (it runs as the `windows-installers` job in `test.yml`):
+
+```bash
+packages/windows/check-installers.sh   # needs "nsis" (makensis) and python3
+```
+
+It compiles `gset.nsi` with a stub `gset.exe` payload and verifies `gset.wxs`
+is well-formed XML. (WiX's full schema validation still requires the `wix`
+tool on a .NET host.)
+
 ## What CI does
 
 `.github/workflows/release.yml` builds both installers on `v*` tag pushes and

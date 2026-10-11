@@ -2,7 +2,7 @@
 <!--
   GSET Windows installer (MSI), built with the WiX Toolset:
 
-      dotnet tool install --global wix
+      dotnet tool install -g wix
       wix build gset.wxs -d Version=3.3.0 -d Binary=...\gset.exe \
             -d Icon=...\gset.ico -o gset-3.3.0-windows-amd64.msi
 

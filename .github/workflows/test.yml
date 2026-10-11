@@ -37,3 +37,15 @@ jobs:
 
       - name: Run cargo deny
         uses: EmbarkStudios/cargo-deny-action@v2
+
+  windows-installers:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+
+      - name: Validate installer sources
+        run: packages/windows/check-installers.sh

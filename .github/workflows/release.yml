@@ -192,8 +192,14 @@ jobs:
           $p = Start-Process -FilePath "$installDir\Uninstall GSET.exe" -ArgumentList @('/S', "_?=$installDir") -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "uninstaller exited $($p.ExitCode)" }
           if (Test-Path "$installDir\gset.exe") { throw "uninstall left gset.exe" }
+          if (Test-Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET') { throw "uninstall key (HKLM) still present" }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET') { throw "uninstall key (HKCU) still present" }
           $sysPath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
-          if ($sysPath -match [regex]::Escape($installDir)) { throw "PATH still contains GSET after uninstall" }
+          if ($sysPath -match [regex]::Escape($installDir)) {
+            Write-Host "System PATH after uninstall (contains leftover entry):"
+            Write-Host $sysPath
+            throw "PATH still contains GSET after uninstall"
+          }
 
       - name: Build MSI installer (WiX)
         shell: pwsh
