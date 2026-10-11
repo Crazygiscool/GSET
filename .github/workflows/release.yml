@@ -177,8 +177,10 @@ jobs:
           $setup = "$root\gset-$version-windows-amd64-setup.exe"
           $installDir = "$env:ProgramFiles\GSET"
 
-          & $setup /S /ALLUSERS
-          if ($LASTEXITCODE -ne 0) { throw "setup exited $LASTEXITCODE" }
+          # NSIS installers/uninstallers are GUI-subsystem apps: `&` would not
+          # wait or set $LASTEXITCODE, so Start-Process -Wait and check ExitCode.
+          $p = Start-Process -FilePath $setup -ArgumentList @('/S', '/ALLUSERS') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup exited $($p.ExitCode)" }
           if (-not (Test-Path "$installDir\gset.exe")) { throw "gset.exe not installed" }
 
           $sysPath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
@@ -187,7 +189,8 @@ jobs:
           & "$installDir\gset.exe" version
           if ($LASTEXITCODE -ne 0) { throw "gset version failed" }
 
-          & "$installDir\Uninstall GSET.exe" /S "_?=$installDir"
+          $p = Start-Process -FilePath "$installDir\Uninstall GSET.exe" -ArgumentList @('/S', "_?=$installDir") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstaller exited $($p.ExitCode)" }
           if (Test-Path "$installDir\gset.exe") { throw "uninstall left gset.exe" }
           $sysPath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
           if ($sysPath -match [regex]::Escape($installDir)) { throw "PATH still contains GSET after uninstall" }
