@@ -274,39 +274,55 @@ FunctionEnd
 Section "Uninstall"
   SetRegView 64
 
-  ; Remove whichever scope this install used. Both keys are checked because
-  ; the running copy may be a different scope than the one uninstalling.
-  ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"
-  ${If} $0 != ""
-    Call un.RemoveFromSystemPath
-    DeleteRegKey HKLM "${UNINST_KEY}"
+  ; Resolve where this install actually put things. $INSTDIR normally already
+  ; matches, but trust the recorded location so the right PATH entry is purged
+  ; even if the package was reinstalled in the other scope.
+  ReadRegStr $2 HKLM "${UNINST_KEY}" "InstallLocation"
+  ${If} $2 == ""
+    ReadRegStr $2 HKCU "${UNINST_KEY}" "InstallLocation"
+  ${EndIf}
+  ${If} $2 != ""
+    StrCpy $INSTDIR $2
   ${EndIf}
 
-  ReadRegStr $0 HKCU "${UNINST_KEY}" "InstallLocation"
-  ${If} $0 != ""
-    Call un.RemoveFromUserPath
-    DeleteRegKey HKCU "${UNINST_KEY}"
-  ${EndIf}
+  ; Purge $INSTDIR from PATH in both scopes, unconditionally. Each function
+  ; only writes the value back when it actually changed, so a per-machine and
+  ; a per-user install never clobber the other scope's PATH.
+  Call un.RemoveFromSystemPath
+  Call un.RemoveFromUserPath
 
+  DeleteRegKey HKLM "${UNINST_KEY}"
+  DeleteRegKey HKCU "${UNINST_KEY}"
   RMDir /r "$SMPROGRAMS\${PRODUCTNAME}"
   RMDir /r "$INSTDIR"
   Call un.BroadcastEnvironmentChange
 SectionEnd
 
-Function un.RemoveFromSystemPath
-  ReadRegStr $1 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
+; Strips every occurrence of $INSTDIR from the PATH in $1 (the bare directory
+; or any ;-delimited position). $2 is left holding the original so callers
+; can tell whether the value actually changed before writing it back.
+Function un.PurgeFromPath
+  StrCpy $2 $1
+  ${IfThen} $1 == "$INSTDIR" ${|} StrCpy $1 "" ${|}
   ${UnStrRep} $1 $1 ";$INSTDIR;" ";"
   ${UnStrRep} $1 $1 ";$INSTDIR" ""
   ${UnStrRep} $1 $1 "$INSTDIR;" ""
-  WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" "$1"
+FunctionEnd
+
+Function un.RemoveFromSystemPath
+  ReadRegStr $1 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
+  Call un.PurgeFromPath
+  ${If} $1 != $2
+    WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" "$1"
+  ${EndIf}
 FunctionEnd
 
 Function un.RemoveFromUserPath
   ReadRegStr $1 HKCU "Environment" "Path"
-  ${UnStrRep} $1 $1 ";$INSTDIR;" ";"
-  ${UnStrRep} $1 $1 ";$INSTDIR" ""
-  ${UnStrRep} $1 $1 "$INSTDIR;" ""
-  WriteRegExpandStr HKCU "Environment" "Path" "$1"
+  Call un.PurgeFromPath
+  ${If} $1 != $2
+    WriteRegExpandStr HKCU "Environment" "Path" "$1"
+  ${EndIf}
 FunctionEnd
 
 Function un.BroadcastEnvironmentChange
