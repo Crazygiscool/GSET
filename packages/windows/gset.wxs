@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  GSET Windows installer (MSI), built with the WiX Toolset v5 (pinned; v7+
-  requires accepting the OSMF EULA, and this file uses v4/v5 schema).
+  GSET Windows installer (MSI), built with the WiX Toolset v5, pinned to
+  version 5.0.2. WiX v7+ requires accepting the OSMF EULA; this file uses the
+  v4/v5 schema.
 
-      dotnet tool install -g wix <pin version 5.0.2>
-      wix build gset.wxs -d Version=3.3.0 -d Binary=...\gset.exe \
-            -d Icon=...\gset.ico -o gset-3.3.0-windows-amd64.msi
+  Install the .NET global tool wix, pinned to version 5.0.2, then build with
+  architecture x64 and the Version, Binary, License, and Icon variables.
 
   The MSI is built per-machine: gset.exe goes to Program Files, is added to
   the system PATH so `gset` works in any new console, and lands in Add/Remove
