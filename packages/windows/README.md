@@ -42,6 +42,7 @@ EULA, and this project's `.wxs` is v4/v5 schema:
 ```bat
 dotnet tool install --global wix --version 5.0.2
 wix build packages\windows\gset.wxs ^
+       -arch x64 ^
        -d Version=3.3.0 ^
        -d Binary=C:\path\to\gset.exe ^
        -d License=C:\path\to\LICENSE ^

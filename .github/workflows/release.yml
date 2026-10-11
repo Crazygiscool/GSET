@@ -207,6 +207,7 @@ jobs:
           $version = "${{ steps.version.outputs.VERSION }}"
           $root = "$env:GITHUB_WORKSPACE"
           wix build "$root\packages\windows\gset.wxs" `
+            -arch x64 `
             -d Version=$version `
             -d Binary="$root\install\gset.exe" `
             -d License="$root\LICENSE" `
