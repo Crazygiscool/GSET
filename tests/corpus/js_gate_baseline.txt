@@ -1,17 +1,17 @@
 backend    arguments
 backend    async_flow
-backend    classes
+ok         classes
 backend    comprehensions
 backend    context_managers
 ok         declaration_after_if
-backend    declarations
-backend    decorators
+ok         declarations
+ok         decorators
 ok         destructuring
 backend    exceptions
 ok         fib
 backend    fstrings
 backend    higher_order
-backend    imports
+ok         imports
 backend    lambdas
 backend    literals
 backend    loops
@@ -22,4 +22,4 @@ backend    operators
 ok         returns
 backend    typed
 
-6 ok / 0 frontend / 17 backend / 0 malformed / 0 invalid
+10 ok / 0 frontend / 13 backend / 0 malformed / 0 invalid
