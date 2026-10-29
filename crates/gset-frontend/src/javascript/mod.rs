@@ -2,7 +2,7 @@
 
 use gset_ir::{
     BinaryOp, Block, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId, Lowered,
-    Module, Name, Path as IrPath, Pattern, SourceId, SourceMap, Span, Stmt,
+    Module, Name, Path as IrPath, Pattern, SourceId, SourceMap, Span, Stmt, VarDecl,
 };
 
 use crate::Frontend;
@@ -85,6 +85,9 @@ impl Frontend for JavaScript {
                         if let Some(stmt) = lower_expr_statement(child, id, text) {
                             items.push(Item::Stmt(stmt));
                         }
+                    }
+                    "lexical_declaration" | "variable_declaration" => {
+                        lower_lexical_declaration(child, id, text, &mut items);
                     }
                     "program" => {}
                     _ => {
@@ -196,6 +199,47 @@ fn lower_block(node: tree_sitter::Node, source: SourceId, text: &str) -> Block {
     }
 }
 
+fn lower_lexical_declaration(
+    node: tree_sitter::Node,
+    source: SourceId,
+    text: &str,
+    items: &mut Vec<Item>,
+) {
+    let span = span_of(node, source);
+    let mut ci = 0;
+    while ci < node.child_count() {
+        if let Some(c) = node.child(ci)
+            && c.kind() == "variable_declarator"
+        {
+            let mut name_node = c.child_by_field_name("name");
+            if name_node.is_none() {
+                let mut j = 0;
+                while let Some(child) = c.child(j as u32) {
+                    if child.kind() == "identifier" {
+                        name_node = Some(child);
+                        break;
+                    }
+                    j += 1;
+                }
+            }
+            if let Some(nn) = name_node {
+                let pname = text_of(nn, text);
+                let value_node = c.child_by_field_name("value");
+                let value = value_node.map(|vn| lower_expr(vn, source, text));
+                items.push(Item::Global(VarDecl {
+                    pattern: Pattern::bind(Arc::from(pname), span_of(nn, source)),
+                    ty: None,
+                    value,
+                    mutable: true,
+                    exported: false,
+                    span,
+                }));
+            }
+        }
+        ci += 1;
+    }
+}
+
 fn lower_expr_statement(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Stmt> {
     let span = span_of(node, source);
     let mut ci = 0;
@@ -226,6 +270,82 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                 ci += 1;
             }
             Some(Stmt::Return { value: v, span })
+        }
+        "lexical_declaration" | "variable_declaration" => {
+            let mut stmts = Vec::new();
+            let mut ci = 0;
+            while ci < node.child_count() {
+                if let Some(child) = node.child(ci)
+                    && child.kind() == "variable_declarator"
+                {
+                    let name_node = child.child_by_field_name("name");
+                    let value_node = child.child_by_field_name("value");
+                    if let Some(nn) = name_node {
+                        let pname = text_of(nn, text);
+                        let mut value = None;
+                        if let Some(vn) = value_node {
+                            value = Some(lower_expr(vn, source, text));
+                        }
+                        stmts.push(Stmt::Decl(VarDecl {
+                            pattern: Pattern::bind(Arc::from(pname), span_of(nn, source)),
+                            ty: None,
+                            value,
+                            mutable: true,
+                            exported: false,
+                            span,
+                        }));
+                    }
+                }
+                ci += 1;
+            }
+            if stmts.is_empty() {
+                None
+            } else if stmts.len() == 1 {
+                Some(stmts.pop().unwrap())
+            } else {
+                Some(Stmt::Block(Block {
+                    statements: stmts,
+                    span,
+                }))
+            }
+        }
+        "while_statement" => {
+            let mut cond_opt = None;
+            let mut body = Block {
+                statements: Vec::new(),
+                span,
+            };
+            let mut ci = 0;
+            while ci < node.child_count() {
+                if let Some(c) = node.child(ci) {
+                    if c.kind() == "parenthesized_expression" {
+                        let mut inner = 0;
+                        while inner < c.child_count() {
+                            if let Some(ec) = c.child(inner)
+                                && ec.kind() != "("
+                                && ec.kind() != ")"
+                            {
+                                cond_opt = Some(lower_expr(ec, source, text));
+                            }
+                            inner += 1;
+                        }
+                    } else if c.kind() == "statement_block" {
+                        body = lower_block(c, source, text);
+                    } else if let Some(st) = lower_stmt(c, source, text) {
+                        body = Block {
+                            statements: vec![st],
+                            span,
+                        };
+                    }
+                }
+                ci += 1;
+            }
+            Some(Stmt::While {
+                condition: cond_opt.unwrap_or(Expr::null(span)),
+                body,
+                else_body: None,
+                span,
+            })
         }
         "if_statement" => {
             let mut cond_opt = None;
