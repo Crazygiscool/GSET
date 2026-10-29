@@ -105,11 +105,26 @@ impl<'a> Emitter<'a> {
         self.out.writeln("}");
     }
 
+    fn emit_method(&mut self, f: &Function) {
+        let name = &f.name;
+        let params = f
+            .params
+            .iter()
+            .filter_map(pattern_name)
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.out.writeln(&format!("{}({}) {{", name, params));
+        self.out.indent();
+        self.emit_block(&f.body);
+        self.out.dedent();
+        self.out.writeln("}");
+    }
+
     fn emit_class(&mut self, c: &Class) {
         self.out.writeln(&format!("class {} {{", c.name));
         self.out.indent();
         for m in &c.methods {
-            self.emit_function(m);
+            self.emit_method(m);
             self.out.newline();
         }
         self.out.dedent();
@@ -244,7 +259,7 @@ impl<'a> Emitter<'a> {
                     BinaryOp::Rem => format!("({} % {})", l, r),
                     BinaryOp::BitAnd => format!("({} & {})", l, r),
                     BinaryOp::BitOr => format!("({} | {})", l, r),
-                    _ => format!("({} /*op*/ {})", l, r),
+                    _ => format!("({} + {})", l, r),
                 }
             }
             ExprKind::Logical { op, lhs, rhs } => {
@@ -266,7 +281,7 @@ impl<'a> Emitter<'a> {
                     ComparisonOp::Le => format!("({} <= {})", l, r),
                     ComparisonOp::Gt => format!("({} > {})", l, r),
                     ComparisonOp::Ge => format!("({} >= {})", l, r),
-                    _ => format!("({} /*cmp*/ {})", l, r),
+                    _ => "false".to_string(),
                 }
             }
             ExprKind::Call { callee, args, .. } => {
@@ -325,7 +340,7 @@ impl<'a> Emitter<'a> {
                     let s = start
                         .as_ref()
                         .map(|x| self.emit_expr(x))
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| "0".to_string());
                     let e = self.emit_expr(e);
                     format!("{}.slice({}, {})", t, s, e)
                 } else if let Some(s) = start {
@@ -350,7 +365,15 @@ impl<'a> Emitter<'a> {
         match lit {
             Literal::Int(n) => n.clone(),
             Literal::Float(n) => n.clone(),
-            Literal::Str(s) => format!("\"{}\"", s.replace('\"', "\\\"")),
+            Literal::Str(s) => {
+                let s = s
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r")
+                    .replace('\t', "\\t");
+                format!("\"{}\"", s)
+            }
             Literal::Bool(b) => {
                 if *b {
                     "true".into()
