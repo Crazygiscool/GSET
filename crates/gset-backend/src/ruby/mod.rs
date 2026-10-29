@@ -371,9 +371,16 @@ impl<'a> Emitter<'a> {
                     format!("{}.slice()", t)
                 }
             }
-            ExprKind::Lambda { .. } => {
-                unsupported(self.diagnostics, expr.span, "lambda");
-                "undefined".into()
+            ExprKind::Lambda { params, body } => {
+                let mut ps = Vec::new();
+                for p in params {
+                    if let Some(name) = pattern_name(p) {
+                        ps.push(name);
+                    }
+                }
+                let ps = ps.join(", ");
+                let b = self.emit_expr(body);
+                format!("-> ({}) {{ {} }}", ps, b)
             }
             _ => {
                 unsupported(self.diagnostics, expr.span, "expression");
