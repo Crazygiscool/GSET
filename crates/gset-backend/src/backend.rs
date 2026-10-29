@@ -4,6 +4,7 @@ use gset_ir::{DiagnosticBag, Module, SourceMap, Span};
 
 use crate::go::Go;
 use crate::js::JavaScript;
+use crate::ruby::Ruby;
 use crate::target::{Capability, Support, TargetId};
 use crate::writer::CodeWriter;
 
@@ -73,6 +74,7 @@ pub fn backend_for(id: TargetId) -> Option<Box<dyn Backend>> {
         TargetId::GO => Some(Box::new(Go)),
         TargetId::PYTHON => Some(Box::new(crate::python::Python)),
         TargetId::JAVASCRIPT => Some(Box::new(JavaScript)),
+        TargetId::RUBY => Some(Box::new(Ruby)),
         _ => None,
     }
 }
