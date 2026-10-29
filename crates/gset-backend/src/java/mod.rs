@@ -589,10 +589,31 @@ impl<'a> Emitter<'a> {
                 "java.util.stream.IntStream.range(0, 0).boxed().toList()".to_string()
             }
             ExprKind::Comprehension { .. } => "java.util.List.of()".to_string(),
+            ExprKind::Format {
+                segments,
+                arguments,
+                ..
+            } => {
+                // String concatenation of segments and holes.
+                let mut parts: Vec<String> = Vec::new();
+                for (i, segment) in segments.iter().enumerate() {
+                    if !segment.is_empty() {
+                        parts.push(format!("\"{}\"", segment.replace('\"', "\\\"")));
+                    }
+                    if i < arguments.len() {
+                        parts.push(format!("String.valueOf({})", self.emit_expr(&arguments[i])));
+                    }
+                }
+                if parts.is_empty() {
+                    "\"\"".to_string()
+                } else {
+                    parts.join(" + ")
+                }
+            }
             ExprKind::Let { value, body, .. } => {
                 format!("{}; // {}", self.emit_expr(value), self.emit_expr(body))
             }
-            ExprKind::Format { .. } => "java.lang.String.format(\"\")".to_string(),
+
             ExprKind::Unpack { .. } => "null".to_string(),
             ExprKind::Error(_) => "null".to_string(),
             ExprKind::Set { elements } => {

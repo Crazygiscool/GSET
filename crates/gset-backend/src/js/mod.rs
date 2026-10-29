@@ -447,6 +447,23 @@ impl<'a> Emitter<'a> {
                 )
             }
             ExprKind::Comprehension { .. } => "[]".to_string(),
+            ExprKind::Format {
+                segments,
+                arguments,
+                ..
+            } => {
+                let mut out = String::from("`");
+                for (i, segment) in segments.iter().enumerate() {
+                    out.push_str(&segment.replace('`', "\\`").replace("${", "\\${"));
+                    if i < arguments.len() {
+                        out.push_str("${");
+                        out.push_str(&self.emit_expr(&arguments[i]));
+                        out.push('}');
+                    }
+                }
+                out.push('`');
+                out
+            }
             _ => {
                 unsupported(self.diagnostics, expr.span, "expression");
                 "undefined".into()
