@@ -195,6 +195,7 @@ fn runtime_command(target: TargetId) -> Option<ProcessCommand> {
             Some(command)
         }
         TargetId::PYTHON => Some(ProcessCommand::new("python3")),
+        TargetId::JAVASCRIPT => Some(ProcessCommand::new("node")),
         _ => None,
     }
 }
