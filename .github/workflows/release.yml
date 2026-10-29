@@ -124,6 +124,17 @@ jobs:
         shell: bash
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Verify version matches Cargo.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          CARGO_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag version $TAG_VERSION does not match Cargo.toml version $CARGO_VERSION"
+            exit 1
+          fi
+
       - name: Download Windows binary
         uses: actions/download-artifact@v4
         with:
@@ -186,8 +197,9 @@ jobs:
           $sysPath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
           if ($sysPath -notmatch [regex]::Escape($installDir)) { throw "system PATH not updated: $sysPath" }
 
-          & "$installDir\gset.exe" version
+          $verOut = & "$installDir\gset.exe" version
           if ($LASTEXITCODE -ne 0) { throw "gset version failed" }
+          if ($verOut -notmatch "GSET\s+v$version") { throw "gset version mismatch (got: $verOut, want: v$version)" }
 
           $p = Start-Process -FilePath "$installDir\Uninstall GSET.exe" -ArgumentList @('/S', "_?=$installDir") -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "uninstaller exited $($p.ExitCode)" }
@@ -226,6 +238,9 @@ jobs:
           $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', "/l*v `"$root\msi-install.log`"") -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /i failed with $($p.ExitCode)" }
           if (-not (Test-Path "$installDir\gset.exe")) { throw "MSI did not install gset.exe" }
+          $verOut = & "$installDir\gset.exe" version
+          if ($LASTEXITCODE -ne 0) { throw "gset version failed" }
+          if ($verOut -notmatch "GSET\s+v$version") { throw "MSI gset version mismatch (got: $verOut, want: v$version)" }
           $sysPath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
           if ($sysPath -notmatch [regex]::Escape($installDir)) { throw "MSI did not update system PATH" }
 
@@ -272,8 +287,9 @@ jobs:
         id: notes
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          cat > RELEASE_NOTES.md << EOF
-          # GSET v$VERSION Release
+          VERSION=${VERSION#v}
+          cat > RELEASE_NOTES.md << 'EOF'
+          # GSET __VERSION__ Release
           ## Installation
           ### Linux / macOS / Windows (Git Bash)
           ```bash
@@ -282,9 +298,10 @@ jobs:
           ### Manual Install
           Download the appropriate archive for your platform from the assets below.
           ### Windows Installers
-          - \`gset-${VERSION}-windows-amd64-setup.exe\` - NSIS setup (all users or just for me)
-          - \`gset-${VERSION}-windows-amd64.msi\` - MSI (all users)
+          - `gset-__VERSION__-windows-amd64-setup.exe` - NSIS setup (all users or just for me)
+          - `gset-__VERSION__-windows-amd64.msi` - MSI (all users)
           EOF
+          sed -i "s/__VERSION__/${VERSION}/g" RELEASE_NOTES.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
