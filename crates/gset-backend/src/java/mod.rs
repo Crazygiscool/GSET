@@ -121,6 +121,18 @@ impl<'a> Emitter<'a> {
         self.out
             .writeln(&format!("public static Object {}({})  {{", name, params));
         self.out.indent();
+        self.locals.clear();
+        for n in f.params.iter().filter_map(pattern_name) {
+            self.locals.insert(n);
+        }
+        let mut __declared = std::collections::HashSet::new();
+        collect_assign_targets(&f.body, &mut __declared);
+        for name in &__declared {
+            if !self.locals.contains(name) {
+                self.locals.insert(name.clone());
+                self.out.writeln(&format!("Object {} = null;", name));
+            }
+        }
         self.emit_block(&f.body);
         if !has_return(&f.body) {
             self.out.writeln("return null;");
@@ -145,6 +157,18 @@ impl<'a> Emitter<'a> {
             self.out
                 .writeln(&format!("public Object {}({})  {{", name, params));
             self.out.indent();
+            self.locals.clear();
+            for n in m.params.iter().filter_map(pattern_name) {
+                self.locals.insert(n);
+            }
+            let mut __declared = std::collections::HashSet::new();
+            collect_assign_targets(&m.body, &mut __declared);
+            for name in &__declared {
+                if !self.locals.contains(name) {
+                    self.locals.insert(name.clone());
+                    self.out.writeln(&format!("Object {} = null;", name));
+                }
+            }
             self.emit_block(&m.body);
             if !has_return(&m.body) {
                 self.out.writeln("return null;");
@@ -325,12 +349,24 @@ impl<'a> Emitter<'a> {
             ExprKind::Path(path) => {
                 if path.segments.is_empty() {
                     "null".into()
-                } else {
-                    let mut parts = Vec::new();
-                    for seg in &path.segments {
-                        parts.push(java_ident(seg));
+                } else if path.segments.len() == 1 {
+                    let name = path.segments[0].to_string();
+                    let ident = java_ident(&name);
+                    // Anything we have not declared as a local or defined as a
+                    // function is not a symbol javac can resolve: emit a null
+                    // placeholder rather than an invalid identifier.
+                    if self.locals.contains(&ident) || self.known_functions.contains(&ident) {
+                        ident
+                    } else {
+                        unsupported(self.diagnostics, expr.span, "undeclared identifier");
+                        "null".into()
                     }
-                    parts.join(".")
+                } else {
+                    path.segments
+                        .iter()
+                        .map(java_ident)
+                        .collect::<Vec<_>>()
+                        .join(".")
                 }
             }
             ExprKind::Unary { op, operand, .. } => {
@@ -409,7 +445,11 @@ impl<'a> Emitter<'a> {
                     out.push(self.emit_expr(e));
                 }
                 let a = out.join(", ");
-                format!("gsetCall({}, {})", c, a)
+                if a.is_empty() {
+                    format!("gsetCall({})", c)
+                } else {
+                    format!("gsetCall({}, {})", c, a)
+                }
             }
             ExprKind::Field { target, field } => {
                 let target_str = if let ExprKind::Path(path) = &target.kind {
@@ -592,6 +632,41 @@ fn java_ident(name: impl std::fmt::Display) -> String {
         | "super" | "switch" | "synchronized" | "this" | "throw" | "throws" | "transient"
         | "try" | "void" | "volatile" | "while" | "_" => format!("{}_0", name),
         _ => name.to_string(),
+    }
+}
+
+fn collect_assign_targets(block: &Block, out: &mut std::collections::HashSet<String>) {
+    for stmt in &block.statements {
+        match stmt {
+            Stmt::Assign { target, .. } => {
+                if let Some(name) = pattern_name(target) {
+                    out.insert(name);
+                }
+            }
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_assign_targets(then_branch, out);
+                if let Some(Else::Block(b)) = else_branch.as_deref() {
+                    collect_assign_targets(b, out);
+                }
+                if let Some(Else::If(i)) = else_branch.as_deref() {
+                    // crude, but acceptable for collecting names
+                    let b = Block {
+                        statements: vec![*i.clone()],
+                        span: i.span(),
+                    };
+                    collect_assign_targets(&b, out);
+                }
+            }
+            Stmt::While { body, .. } | Stmt::ForIn { body, .. } => {
+                collect_assign_targets(body, out)
+            }
+            Stmt::Block(b) => collect_assign_targets(b, out),
+            _ => {}
+        }
     }
 }
 
