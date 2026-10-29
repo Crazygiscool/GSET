@@ -148,11 +148,6 @@ fn run_command(path: &Path, target: &str, from: Option<&str>, keep: bool) -> Exi
         eprintln!("gset: `{target}` is not a target this build understands");
         return ExitCode::from(2);
     };
-    let Some(mut command) = runtime_command(id) else {
-        eprintln!("gset: running {id} is not supported yet");
-        return ExitCode::from(2);
-    };
-
     let directory = temp_directory(path);
     if let Err(error) = std::fs::create_dir_all(&directory) {
         eprintln!("gset: cannot create {}: {error}", directory.display());
@@ -164,17 +159,28 @@ fn run_command(path: &Path, target: &str, from: Option<&str>, keep: bool) -> Exi
         return ExitCode::from(1);
     }
 
-    command.arg(&program);
-    let code = match command.status() {
-        Ok(status) => ExitCode::from(
-            status
-                .code()
-                .filter(|code| (0..=255).contains(code))
-                .unwrap_or(1) as u8,
-        ),
-        Err(error) => {
-            eprintln!("gset: cannot run {id}: {error}");
-            ExitCode::from(127)
+    let code = if id == TargetId::JAVA {
+        run_java(&directory, &program)
+    } else {
+        let Some(mut command) = runtime_command(id) else {
+            eprintln!("gset: running {id} is not supported yet");
+            if !keep {
+                let _ = std::fs::remove_dir_all(&directory);
+            }
+            return ExitCode::from(2);
+        };
+        command.arg(&program);
+        match command.status() {
+            Ok(status) => ExitCode::from(
+                status
+                    .code()
+                    .filter(|code| (0..=255).contains(code))
+                    .unwrap_or(1) as u8,
+            ),
+            Err(error) => {
+                eprintln!("gset: cannot run {id}: {error}");
+                ExitCode::from(127)
+            }
         }
     };
 
@@ -198,6 +204,49 @@ fn runtime_command(target: TargetId) -> Option<ProcessCommand> {
         TargetId::JAVASCRIPT => Some(ProcessCommand::new("node")),
         TargetId::RUBY => Some(ProcessCommand::new("ruby")),
         _ => None,
+    }
+}
+
+fn run_java(directory: &Path, program: &Path) -> ExitCode {
+    let compile = ProcessCommand::new("javac")
+        .current_dir(directory)
+        .arg(program)
+        .status();
+    match compile {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            return ExitCode::from(
+                status
+                    .code()
+                    .filter(|code| (0..=255).contains(code))
+                    .unwrap_or(1) as u8,
+            );
+        }
+        Err(error) => {
+            eprintln!("gset: cannot compile Java source: {error}");
+            return ExitCode::from(127);
+        }
+    }
+
+    let class_name = program
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("program");
+    let execution = ProcessCommand::new("java")
+        .current_dir(directory)
+        .arg(class_name)
+        .status();
+    match execution {
+        Ok(status) => ExitCode::from(
+            status
+                .code()
+                .filter(|code| (0..=255).contains(code))
+                .unwrap_or(1) as u8,
+        ),
+        Err(error) => {
+            eprintln!("gset: cannot run Java program: {error}");
+            ExitCode::from(127)
+        }
     }
 }
 
