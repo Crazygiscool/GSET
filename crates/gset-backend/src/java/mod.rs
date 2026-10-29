@@ -84,7 +84,7 @@ impl<'a> Emitter<'a> {
             match item {
                 Item::Global(_) => {}
                 Item::Stmt(s) => self.emit_stmt(s),
-                Item::Import(_) => unsupported(self.diagnostics, item.span(), "import"),
+                Item::Import(_) => {}
                 _ => {}
             }
         }
