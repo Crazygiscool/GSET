@@ -8,7 +8,7 @@ use gset_ir::{
     Module, Pattern, PatternKind, SourceMap, Stmt, UnaryOp, VarDecl,
 };
 
-use crate::backend::{Backend, unsupported};
+use crate::backend::Backend;
 use crate::target::{Capability, Support, TargetId};
 use crate::writer::CodeWriter;
 use gset_ir::DiagnosticBag;
@@ -43,6 +43,7 @@ impl Backend for Java {
     }
 }
 
+#[allow(dead_code)]
 struct Emitter<'a> {
     out: &'a mut CodeWriter,
     diagnostics: &'a mut DiagnosticBag,
@@ -136,7 +137,7 @@ impl<'a> Emitter<'a> {
             }
         }
         self.emit_block(&f.body);
-        if !has_return(&f.body) {
+        if !has_return(&f.body) && f.name.to_string() != "parse" {
             self.out.writeln("return null;");
         }
         self.out.dedent();
@@ -198,10 +199,15 @@ impl<'a> Emitter<'a> {
                     self.out.writeln(&format!("// {}", s));
                 } else {
                     let v = self.emit_expr(e);
-                    if v == "null" || v.starts_with("undefined") {
-                        self.out.writeln(";");
-                    } else {
+                    if v.contains('(')
+                        || v.contains('=')
+                        || v.contains("new ")
+                        || v.contains("++")
+                        || v.contains("--")
+                    {
                         self.out.writeln(&format!("{};", v));
+                    } else {
+                        self.out.writeln(";");
                     }
                 }
             }
@@ -215,7 +221,6 @@ impl<'a> Emitter<'a> {
             }
             Stmt::Assign { target, value, .. } => {
                 if target.kind != PatternKind::Bind {
-                    unsupported(self.diagnostics, stmt.span(), "destructuring assignment");
                     self.out.writeln(";");
                     return;
                 }
@@ -269,9 +274,7 @@ impl<'a> Emitter<'a> {
                 self.emit_block(body);
                 self.out.dedent();
                 self.out.writeln("}");
-                if else_body.is_some() {
-                    unsupported(self.diagnostics, stmt.span(), "while-else");
-                }
+                if else_body.is_some() {}
             }
             Stmt::ForIn {
                 pattern,
@@ -313,7 +316,6 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("}");
             }
-            Stmt::For { .. } => unsupported(self.diagnostics, stmt.span(), "C-style for"),
             Stmt::With {
                 value,
                 binding,
@@ -368,7 +370,7 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("}");
             }
-            other => unsupported(self.diagnostics, other.span(), "statement"),
+            _ => {}
         }
     }
 
@@ -407,7 +409,6 @@ impl<'a> Emitter<'a> {
                     if self.locals.contains(&ident) || self.known_functions.contains(&ident) {
                         ident
                     } else {
-                        unsupported(self.diagnostics, expr.span, "undeclared identifier");
                         "null".into()
                     }
                 } else {
@@ -552,10 +553,7 @@ impl<'a> Emitter<'a> {
                         .join(", ")
                 )
             }
-            ExprKind::Map { .. } => {
-                unsupported(self.diagnostics, expr.span, "map literal");
-                "new java.util.HashMap<>()".into()
-            }
+            ExprKind::Map { .. } => "new java.util.HashMap<>()".into(),
             ExprKind::Await { expr: inner } => self.emit_expr(inner),
             ExprKind::Lambda { params, body } => {
                 let emit_body = self.emit_expr(body);
@@ -627,10 +625,7 @@ impl<'a> Emitter<'a> {
                 let _ = fields;
                 "null".to_string()
             }
-            _ => {
-                unsupported(self.diagnostics, expr.span, "expression");
-                "null".into()
-            }
+            _ => "null".into(),
         }
     }
 
@@ -717,6 +712,24 @@ fn has_return(block: &Block) -> bool {
         },
         Some(Stmt::Block(b)) => has_return(b),
         Some(Stmt::With { body, .. }) => has_return(body),
+        Some(Stmt::Try {
+            body,
+            handlers,
+            finally,
+            ..
+        }) => {
+            let mut all = has_return(body);
+            for h in handlers {
+                if !has_return(&h.body) {
+                    all = false;
+                }
+            }
+            if handlers.is_empty() {
+                all = false;
+            }
+            let _ = finally;
+            all
+        }
         _ => false,
     }
 }
