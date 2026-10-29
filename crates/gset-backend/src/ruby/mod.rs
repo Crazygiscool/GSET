@@ -25,7 +25,8 @@ impl Backend for Ruby {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Classes | FStrings | Closures | Async | MultipleAssignment => Support::Native,
+            Classes | FStrings | Closures | Async | MultipleAssignment | Exceptions
+            | Comprehensions => Support::Native,
             _ => Support::Unsupported,
         }
     }
@@ -207,6 +208,36 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("end");
             }
+            Stmt::Try {
+                body,
+                handlers,
+                finally,
+                ..
+            } => {
+                self.out.writeln("begin");
+                self.out.indent();
+                self.emit_block(body);
+                self.out.dedent();
+                for h in handlers {
+                    let pat = h
+                        .binding
+                        .as_ref()
+                        .and_then(pattern_name)
+                        .unwrap_or_else(|| "e".to_string());
+                    self.out.writeln(&format!("rescue => {}", pat));
+                    self.out.indent();
+                    self.emit_block(&h.body);
+                    self.out.dedent();
+                }
+                if let Some(fin) = finally {
+                    self.out.writeln("ensure");
+                    self.out.indent();
+                    self.emit_block(fin);
+                    self.out.dedent();
+                }
+                self.out.writeln("end");
+            }
+            Stmt::With { .. } => unsupported(self.diagnostics, stmt.span(), "context manager"),
             other => unsupported(self.diagnostics, other.span(), "statement"),
         }
     }
