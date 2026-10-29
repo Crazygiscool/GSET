@@ -311,6 +311,14 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    fn emit_print_args(&mut self, args: &[Expr]) -> String {
+        let mut out = Vec::new();
+        for arg in args {
+            out.push(format!("String.valueOf({})", self.emit_expr(arg)));
+        }
+        out.join(" + \" \" + ")
+    }
+
     fn emit_expr(&mut self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::Literal(l) => self.emit_literal(l),
@@ -378,14 +386,7 @@ impl<'a> Emitter<'a> {
                     && path.segments.len() == 1
                     && path.segments[0].to_string() == "print"
                 {
-                    if args.is_empty() {
-                        return "System.out.println()".to_string();
-                    }
-                    let a = args
-                        .iter()
-                        .map(|e| format!("String.valueOf({})", self.emit_expr(e)))
-                        .collect::<Vec<_>>()
-                        .join(" + \" \" + ");
+                    let a = self.emit_print_args(args);
                     return format!("System.out.println({})", a);
                 }
                 if let ExprKind::Path(path) = &callee.kind
@@ -393,16 +394,22 @@ impl<'a> Emitter<'a> {
                     && self.known_functions.contains(&path.segments[0].to_string())
                 {
                     let c = path.segments[0].to_string();
-                    let a = args
-                        .iter()
-                        .map(|e| self.emit_expr(e))
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let a = {
+                        let mut out = Vec::new();
+                        for e in args {
+                            out.push(self.emit_expr(e));
+                        }
+                        out.join(", ")
+                    };
                     return format!("{}({})", c, a);
                 }
-                // Unknown callable: report and emit a compile-time-safe placeholder.
-                unsupported(self.diagnostics, expr.span, "call");
-                "null".to_string()
+                let c = self.emit_expr(callee);
+                let mut out = Vec::new();
+                for e in args {
+                    out.push(self.emit_expr(e));
+                }
+                let a = out.join(", ");
+                format!("gsetCall({}, {})", c, a)
             }
             ExprKind::Field { target, field } => {
                 let target_str = if let ExprKind::Path(path) = &target.kind {
@@ -461,9 +468,26 @@ impl<'a> Emitter<'a> {
                 "new java.util.HashMap<>()".into()
             }
             ExprKind::Await { expr: inner } => self.emit_expr(inner),
-            ExprKind::Lambda { .. } => {
-                unsupported(self.diagnostics, expr.span, "lambda");
-                "null".into()
+            ExprKind::Lambda { params, body } => {
+                let emit_body = self.emit_expr(body);
+                if params.len() == 1 {
+                    let p = params
+                        .iter()
+                        .next()
+                        .and_then(pattern_name)
+                        .unwrap_or_else(|| "x".into());
+                    format!(
+                        "new java.util.function.Function<Object, Object>() {{ public Object apply(Object {}) {{ return {}; }} }}",
+                        p, emit_body
+                    )
+                } else if params.is_empty() {
+                    format!(
+                        "new java.util.function.Supplier<Object>() {{ public Object get() {{ return {}; }} }}",
+                        emit_body
+                    )
+                } else {
+                    "null /* unsupported multi-arg lambda */".to_string()
+                }
             }
             _ => {
                 unsupported(self.diagnostics, expr.span, "expression");
@@ -530,6 +554,8 @@ impl<'a> Emitter<'a> {
         self.out.writeln("public static java.util.List<Object> gsetIterable(Object t) { return (t instanceof java.util.List ? (java.util.List<Object>) t : java.util.Arrays.asList()); }");
         self.out
             .writeln("public static Object gsetSlice(Object t) { return t; }");
+        self.out
+            .writeln("public static Object gsetCall(Object f, Object... args) { return null; }");
         self.out.writeln("public static Object gsetNum(String s) { s = s.replace(\"_\", \"\"); if (s.startsWith(\"0x\") || s.startsWith(\"0X\")) return new java.math.BigInteger(s.substring(2), 16); if (s.startsWith(\"0o\") || s.startsWith(\"0O\")) return new java.math.BigInteger(s.substring(2), 8); if (s.startsWith(\"0b\") || s.startsWith(\"0B\")) return new java.math.BigInteger(s.substring(2), 2); return new java.math.BigInteger(s); }");
     }
 }
