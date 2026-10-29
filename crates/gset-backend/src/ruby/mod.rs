@@ -382,6 +382,18 @@ impl<'a> Emitter<'a> {
                 let b = self.emit_expr(body);
                 format!("-> ({}) {{ {} }}", ps, b)
             }
+            ExprKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                format!(
+                    "{} ? {} : {}",
+                    self.emit_expr(condition),
+                    self.emit_expr(then_branch),
+                    self.emit_expr(else_branch)
+                )
+            }
             _ => {
                 unsupported(self.diagnostics, expr.span, "expression");
                 "nil".into()
