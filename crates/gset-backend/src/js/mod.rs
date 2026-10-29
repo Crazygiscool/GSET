@@ -384,9 +384,21 @@ impl<'a> Emitter<'a> {
                     format!("({}) => {}", ps, b)
                 }
             }
-            other => {
+            ExprKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                format!(
+                    "{} ? {} : {}",
+                    self.emit_expr(condition),
+                    self.emit_expr(then_branch),
+                    self.emit_expr(else_branch)
+                )
+            }
+            _ => {
                 unsupported(self.diagnostics, expr.span, "expression");
-                format!("undefined /* {:?} */", other)
+                "undefined".into()
             }
         }
     }
