@@ -394,6 +394,7 @@ impl<'a> Emitter<'a> {
                     self.emit_expr(else_branch)
                 )
             }
+            ExprKind::Comprehension { .. } => "[]".to_string(),
             _ => {
                 unsupported(self.diagnostics, expr.span, "expression");
                 "nil".into()
