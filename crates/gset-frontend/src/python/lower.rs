@@ -1173,17 +1173,6 @@ impl<'a> Lowerer<'a> {
             return vec![Stmt::error("`for` has no sequence", span)];
         };
         let is_async = has_child_token(node, "async");
-        if is_async {
-            self.builder.report(
-                Diagnostic::error(
-                    span,
-                    "`async for` has no representation: it needs an async iterator protocol, \
-                     which no IR loop statement models",
-                )
-                .with_code("gset-python-async-for"),
-            );
-            return Vec::new();
-        }
 
         let pattern = self.pattern(left);
         let iterable = self.expr(iterable);
@@ -1199,6 +1188,7 @@ impl<'a> Lowerer<'a> {
             body,
             else_body,
             is_parallel: false,
+            is_async,
             label: None,
             span,
         }]
@@ -2093,6 +2083,7 @@ impl<'a> Lowerer<'a> {
     fn slice_of(&mut self, target: Expr, node: tree_sitter::Node<'_>, span: Span) -> Expr {
         let mut start = None;
         let mut end = None;
+        let mut step = None;
         let mut colons = 0usize;
         for child in node.children(&mut node.walk()) {
             if child.kind() == ":" {
@@ -2105,13 +2096,11 @@ impl<'a> Lowerer<'a> {
             match colons {
                 0 => start = Some(Box::new(self.expr(child))),
                 1 => end = Some(Box::new(self.expr(child))),
+                2 => step = Some(Box::new(self.expr(child))),
                 _ => {
-                    // A step is not an absent bound but a different slice: it
-                    // drops elements, so dropping it here would answer a
-                    // question the program did not ask.
                     self.builder.report(
-                        Diagnostic::error(span, "a slice step has no representation")
-                            .with_code("gset-python-slice-step"),
+                        Diagnostic::error(span, "a slice has too many bounds")
+                            .with_code("gset-python-slice"),
                     );
                 }
             }
@@ -2121,6 +2110,7 @@ impl<'a> Lowerer<'a> {
                 target: Box::new(target),
                 start,
                 end,
+                step,
                 inclusive: false,
             },
             span,

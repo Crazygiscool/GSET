@@ -1,5 +1,5 @@
 ok         arguments
-frontend   async_flow
+ok         async_flow
 ok         classes
 ok         comprehensions
 ok         context_managers
@@ -18,8 +18,8 @@ ok         loops
 ok         module_shape
 ok         null_handling
 ok         numeric_literals
-frontend   operators
+ok         operators
 ok         returns
 ok         typed
 
-21 ok / 2 frontend / 0 backend / 0 malformed / 0 invalid
+23 ok / 0 frontend / 0 backend / 0 malformed / 0 invalid

@@ -456,7 +456,7 @@ pub enum ExprKind {
         index: Box<Expr>,
     },
 
-    /// A slice, with either bound optional.
+    /// A slice, with either bound (or step) optional.
     Slice {
         /// The sequence being sliced.
         target: Box<Expr>,
@@ -464,6 +464,8 @@ pub enum ExprKind {
         start: Option<Box<Expr>>,
         /// Exclusive end, if given.
         end: Option<Box<Expr>>,
+        /// Stride, if given. Absent means every element.
+        step: Option<Box<Expr>>,
         /// Exclusive end, if the source wrote an inclusive range.
         inclusive: bool,
     },
@@ -768,11 +770,16 @@ impl Expr {
             }
             ExprKind::Index { target, index } => vec![target.as_ref(), index.as_ref()],
             ExprKind::Slice {
-                target, start, end, ..
+                target,
+                start,
+                end,
+                step,
+                ..
             } => {
                 let mut out = vec![target.as_ref()];
                 out.extend(start.as_ref().map(|s| s.as_ref()));
                 out.extend(end.as_ref().map(|e| e.as_ref()));
+                out.extend(step.as_ref().map(|s| s.as_ref()));
                 out
             }
             ExprKind::Field { target, .. } => vec![target.as_ref()],
@@ -869,7 +876,11 @@ impl Expr {
                 index.walk(f);
             }
             ExprKind::Slice {
-                target, start, end, ..
+                target,
+                start,
+                end,
+                step,
+                ..
             } => {
                 target.walk(f);
                 if let Some(start) = start {
@@ -877,6 +888,9 @@ impl Expr {
                 }
                 if let Some(end) = end {
                     end.walk(f);
+                }
+                if let Some(step) = step {
+                    step.walk(f);
                 }
             }
             ExprKind::Field { target, .. } => target.walk(f),
@@ -1084,6 +1098,7 @@ mod tests {
                 target: Box::new(Expr::path("xs", span())),
                 start: Some(Box::new(Expr::int("1", span()))),
                 end: None,
+                step: None,
                 inclusive: false,
             },
             span(),
@@ -1097,6 +1112,7 @@ mod tests {
                 target: Box::new(Expr::path("xs", span())),
                 start: None,
                 end: Some(Box::new(Expr::int("3", span()))),
+                step: None,
                 inclusive: false,
             },
             span(),

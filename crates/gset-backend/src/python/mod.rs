@@ -326,6 +326,7 @@ impl<'a> Emitter<'a> {
                 body,
                 else_body,
                 is_parallel,
+                is_async,
                 label,
                 span,
             } => {
@@ -337,7 +338,8 @@ impl<'a> Emitter<'a> {
                 }
                 let pat = self.emit_pattern(pattern);
                 let it = self.emit_expr(iterable);
-                self.out.writeln(&format!("for {} in {}:", pat, it));
+                let keyword = if *is_async { "async for" } else { "for" };
+                self.out.writeln(&format!("{} {} in {}:", keyword, pat, it));
                 self.out.indent();
                 self.emit_block(body);
                 self.out.dedent();
@@ -709,6 +711,7 @@ impl<'a> Emitter<'a> {
                 target,
                 start,
                 end,
+                step,
                 inclusive,
             } => {
                 let t = self.emit_expr(target);
@@ -722,7 +725,12 @@ impl<'a> Emitter<'a> {
                 } else {
                     end.as_ref().map(|x| self.emit_expr(x)).unwrap_or_default()
                 };
-                format!("{}[{}:{}]", t, s, e)
+                let step_str = step.as_ref().map(|x| self.emit_expr(x)).unwrap_or_default();
+                if step.is_none() {
+                    format!("{}[{}:{}]", t, s, e)
+                } else {
+                    format!("{}[{}:{}:{}]", t, s, e, step_str)
+                }
             }
             ExprKind::Field { target, field } => {
                 let t = self.emit_expr(target);
