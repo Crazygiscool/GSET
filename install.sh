@@ -7,7 +7,11 @@
 
 set -e
 
-VERSION="3.3.0"
+VERSION="3.3.3"
+# Resolve the latest release dynamically so the one-liner never installs stale bits.
+RESOLVED=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
+  | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -n1)
+[ -n "$RESOLVED" ] && VERSION="$RESOLVED"
 REPO="Crazygiscool/GSETLang"
 
 # Check if running on Windows (Git Bash, WSL, MSYS2, Cygwin)
