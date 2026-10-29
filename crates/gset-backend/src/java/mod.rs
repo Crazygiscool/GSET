@@ -256,7 +256,7 @@ impl<'a> Emitter<'a> {
                 let p = pattern
                     .names
                     .first()
-                    .map(|n| java_ident(&n.to_string()))
+                    .map(java_ident)
                     .or_else(|| pattern_name(pattern))
                     .unwrap_or_else(|| "x".into());
                 self.locals.insert(p.clone());
