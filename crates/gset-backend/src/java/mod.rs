@@ -253,19 +253,28 @@ impl<'a> Emitter<'a> {
                 body,
                 ..
             } => {
-                let p = pattern_name(pattern).unwrap_or("x".into());
+                let p = pattern
+                    .names
+                    .first()
+                    .map(|n| java_ident(&n.to_string()))
+                    .or_else(|| pattern_name(pattern))
+                    .unwrap_or_else(|| "x".into());
                 self.locals.insert(p.clone());
-                let extras: Vec<String> = if pattern.kind == PatternKind::Bind {
-                    let mut v = Vec::new();
-                    if pattern.kind == PatternKind::Bind {
-                        for n in pattern.names.iter().skip(1) {
-                            v.push(n.to_string());
+                let mut extras: Vec<String> = Vec::new();
+                if !pattern.names.is_empty() {
+                    let first_bound = pattern_name(pattern);
+                    for n in pattern.names.iter() {
+                        let n = n.to_string();
+                        if Some(n.clone()) != first_bound {
+                            extras.push(n);
                         }
                     }
-                    v
-                } else {
-                    Vec::new()
-                };
+                    // ensure primary is in locals
+                    if let Some(pn) = first_bound {
+                        extras.dedup();
+                        let _ = pn;
+                    }
+                }
                 let it = self.emit_expr(iterable);
                 self.out
                     .writeln(&format!("for (Object {} : gsetIterable({})) {{", p, it));
@@ -309,11 +318,11 @@ impl<'a> Emitter<'a> {
                 if path.segments.is_empty() {
                     "null".into()
                 } else {
-                    path.segments
-                        .iter()
-                        .map(|n| n.to_string())
-                        .collect::<Vec<_>>()
-                        .join(".")
+                    let mut parts = Vec::new();
+                    for seg in &path.segments {
+                        parts.push(java_ident(seg));
+                    }
+                    parts.join(".")
                 }
             }
             ExprKind::Unary { op, operand, .. } => {
