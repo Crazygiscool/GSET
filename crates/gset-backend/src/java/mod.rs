@@ -314,6 +314,26 @@ impl<'a> Emitter<'a> {
                 self.out.writeln("}");
             }
             Stmt::For { .. } => unsupported(self.diagnostics, stmt.span(), "C-style for"),
+            Stmt::With {
+                value,
+                binding,
+                body,
+                ..
+            } => {
+                if let Some(b) = binding {
+                    let name = pattern_name(b).unwrap_or_else(|| "x".to_string());
+                    let v = self.emit_expr(value);
+                    self.out.writeln(&format!("Object {} = {};", name, v));
+                } else {
+                    let v = self.emit_expr(value);
+                    self.out.writeln(&format!("{};", v));
+                }
+                self.out.writeln("{");
+                self.out.indent();
+                self.emit_block(body);
+                self.out.dedent();
+                self.out.writeln("}");
+            }
             Stmt::Try {
                 body,
                 handlers,
@@ -344,7 +364,7 @@ impl<'a> Emitter<'a> {
                 }
                 self.out.writeln("}");
             }
-            Stmt::With { .. } => unsupported(self.diagnostics, stmt.span(), "context manager"),
+
             Stmt::Block(block) => {
                 self.out.writeln("{");
                 self.out.indent();
