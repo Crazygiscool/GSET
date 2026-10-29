@@ -32,6 +32,9 @@ pub mod limits;
 #[cfg(feature = "python")]
 pub mod python;
 
+#[cfg(feature = "javascript")]
+pub mod javascript;
+
 /// Lowers one source language into the IR.
 ///
 /// Implemented per language. The trait exists so `gset-cli` can select a
@@ -58,17 +61,30 @@ pub trait Frontend {
 
 /// Every frontend compiled into this build.
 ///
-/// Defined twice rather than built from a `cfg`-gated `vec!` because attributes
-/// on expressions are still unstable, and a single `vec!` cannot be assembled
-/// from conditionally-compiled elements.
-#[cfg(feature = "python")]
+/// Assembled piecewise so adding a language needs no edit beyond a feature gate.
+#[cfg(any(feature = "python", feature = "javascript"))]
 pub fn frontends() -> Vec<Box<dyn Frontend>> {
-    vec![Box::new(python::Python) as Box<dyn Frontend>]
+    #[cfg(feature = "python")]
+    let py = Some(Box::new(python::Python) as Box<dyn Frontend>);
+    #[cfg(not(feature = "python"))]
+    let py: Option<Box<dyn Frontend>> = None;
+    #[cfg(feature = "javascript")]
+    let js = Some(Box::new(javascript::JavaScript) as Box<dyn Frontend>);
+    #[cfg(not(feature = "javascript"))]
+    let js: Option<Box<dyn Frontend>> = None;
+    let mut result = Vec::new();
+    if let Some(frontend) = py {
+        result.push(frontend);
+    }
+    if let Some(frontend) = js {
+        result.push(frontend);
+    }
+    result
 }
 
 /// Every frontend compiled into this build, which with no language feature
 /// enabled is none at all.
-#[cfg(not(feature = "python"))]
+#[cfg(not(any(feature = "python", feature = "javascript")))]
 pub fn frontends() -> Vec<Box<dyn Frontend>> {
     Vec::new()
 }
