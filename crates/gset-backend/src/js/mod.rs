@@ -370,9 +370,19 @@ impl<'a> Emitter<'a> {
                     format!("{}.slice()", t)
                 }
             }
-            ExprKind::Lambda { .. } => {
-                unsupported(self.diagnostics, expr.span, "lambda");
-                "undefined".into()
+            ExprKind::Lambda { params, body } => {
+                let ps = params
+                    .iter()
+                    .filter_map(pattern_name)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let b = self.emit_expr(body);
+                if params.len() == 1 {
+                    let p = ps;
+                    format!("{} => {}", p, b)
+                } else {
+                    format!("({}) => {}", ps, b)
+                }
             }
             other => {
                 unsupported(self.diagnostics, expr.span, "expression");
