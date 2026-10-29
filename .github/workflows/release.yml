@@ -289,7 +289,7 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/}
           VERSION=${VERSION#v}
           cat > RELEASE_NOTES.md << 'EOF'
-          # GSET __VERSION__ Release
+          # GSET v__VERSION__ Release
           ## Installation
           ### Linux / macOS / Windows (Git Bash)
           ```bash
