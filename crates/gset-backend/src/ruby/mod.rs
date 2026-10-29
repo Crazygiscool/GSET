@@ -66,6 +66,7 @@ impl<'a> Emitter<'a> {
                     self.emit_class(c);
                     self.out.blank();
                 }
+                Item::Import(_) => {}
                 Item::Stmt(s) => {
                     self.emit_stmt(s);
                     self.out.newline();
@@ -220,6 +221,14 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    fn emit_arg_list(&mut self, args: &[Expr]) -> String {
+        let mut out = Vec::new();
+        for arg in args {
+            out.push(self.emit_expr(arg));
+        }
+        out.join(", ")
+    }
+
     fn emit_expr(&mut self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::Literal(l) => self.emit_literal(l),
@@ -233,6 +242,16 @@ impl<'a> Emitter<'a> {
                         .collect::<Vec<_>>()
                         .join(".")
                 }
+            }
+            ExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                let r = self.emit_expr(receiver);
+                let a = self.emit_arg_list(args);
+                format!("{}.{}({})", r, method, a)
             }
             ExprKind::Field { target, field } => {
                 format!("{}.{}", self.emit_expr(target), field)
