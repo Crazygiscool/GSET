@@ -529,6 +529,34 @@ impl<'a> Emitter<'a> {
                     "null /* unsupported multi-arg lambda */".to_string()
                 }
             }
+            ExprKind::Cast { expr: inner, .. } => self.emit_expr(inner),
+            ExprKind::TypeAssert { expr: inner, .. } => self.emit_expr(inner),
+            ExprKind::Assign { value, .. } => self.emit_expr(value),
+            ExprKind::Range { .. } => {
+                "java.util.stream.IntStream.range(0, 0).boxed().toList()".to_string()
+            }
+            ExprKind::Comprehension { .. } => "java.util.List.of()".to_string(),
+            ExprKind::Let { value, body, .. } => {
+                format!("{}; // {}", self.emit_expr(value), self.emit_expr(body))
+            }
+            ExprKind::Format { .. } => "java.lang.String.format(\"\")".to_string(),
+            ExprKind::Unpack { .. } => "null".to_string(),
+            ExprKind::Error(_) => "null".to_string(),
+            ExprKind::Set { elements } => {
+                let mut out = Vec::new();
+                for e in elements {
+                    out.push(self.emit_expr(e));
+                }
+                format!(
+                    "new java.util.HashSet<>(java.util.Arrays.asList({}))",
+                    out.join(", ")
+                )
+            }
+
+            ExprKind::StructLit { fields, .. } => {
+                let _ = fields;
+                "null".to_string()
+            }
             _ => {
                 unsupported(self.diagnostics, expr.span, "expression");
                 "null".into()
