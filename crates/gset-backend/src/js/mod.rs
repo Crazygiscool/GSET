@@ -270,6 +270,17 @@ impl<'a> Emitter<'a> {
                 }
             }
             ExprKind::Call { callee, args, .. } => {
+                if let ExprKind::Path(path) = &callee.kind
+                    && path.segments.len() == 1
+                    && path.segments[0].to_string() == "print"
+                {
+                    let a = args
+                        .iter()
+                        .map(|e| self.emit_expr(e))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return format!("console.log({})", a);
+                }
                 let c = self.emit_expr(callee);
                 let a = args
                     .iter()
