@@ -46,12 +46,14 @@
 mod backend;
 mod go;
 mod js;
+mod ruby;
 mod target;
 mod writer;
 
 pub use backend::{Backend, Emitted, backend_by_name, backend_for, emit};
 pub use js::JavaScript;
 pub use python::Python;
+pub use ruby::Ruby;
 pub use target::{Capability, Support, TargetId};
 pub use writer::CodeWriter;
 mod python;
