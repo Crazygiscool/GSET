@@ -344,12 +344,8 @@ impl<'a> Emitter<'a> {
                 self.out.indent();
                 self.emit_block(body);
                 self.out.dedent();
-                for h in handlers {
-                    let pat = h
-                        .binding
-                        .as_ref()
-                        .and_then(pattern_name)
-                        .unwrap_or_else(|| "e".to_string());
+                if let Some(h) = handlers.first() {
+                    let pat = "e";
                     self.out
                         .writeln(&format!("}} catch (Exception {}) {{", pat));
                     self.out.indent();
@@ -720,6 +716,7 @@ fn has_return(block: &Block) -> bool {
             _ => false,
         },
         Some(Stmt::Block(b)) => has_return(b),
+        Some(Stmt::With { body, .. }) => has_return(body),
         _ => false,
     }
 }
