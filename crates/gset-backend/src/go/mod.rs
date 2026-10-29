@@ -1554,6 +1554,7 @@ impl<'a> Emitter<'a> {
                 start,
                 end,
                 inclusive,
+                ..
             } => self.emit_slice(
                 expr.span,
                 target,

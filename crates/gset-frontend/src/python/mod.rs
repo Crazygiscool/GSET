@@ -336,10 +336,7 @@ def f():
     /// visible. The corpus gate classifies such a file as `frontend`.
     #[test]
     fn the_whole_corpus_lowers_without_errors() {
-        let expected: &[(&str, &str)] = &[
-            ("operators.py", "gset-python-slice-step"),
-            ("async_flow.py", "gset-python-async-for"),
-        ];
+        let expected: &[(&str, &str)] = &[];
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/py");
         let mut files: Vec<_> = std::fs::read_dir(&root)
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", root.display()))

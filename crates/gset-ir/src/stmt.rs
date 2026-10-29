@@ -298,6 +298,8 @@ pub enum Stmt {
         else_body: Option<Block>,
         /// Whether the loop may modify the sequence while iterating.
         is_parallel: bool,
+        /// Whether this is an `async for` loop.
+        is_async: bool,
         /// A label, for `break`/`continue` targeting this loop.
         label: Option<Name>,
         /// Where it was written.

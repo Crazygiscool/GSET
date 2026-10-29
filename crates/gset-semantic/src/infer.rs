@@ -644,7 +644,11 @@ fn infer_kind(expr: &mut Expr, functions: &HashMap<Name, Type>, env: &mut Env) -
             index_type(&target_ty, index, &index_ty)
         }
         ExprKind::Slice {
-            target, start, end, ..
+            target,
+            start,
+            end,
+            step,
+            ..
         } => {
             let target_ty = infer_expr(target, functions, env);
             if let Some(start) = start {
@@ -652,6 +656,9 @@ fn infer_kind(expr: &mut Expr, functions: &HashMap<Name, Type>, env: &mut Env) -
             }
             if let Some(end) = end {
                 infer_expr(end, functions, env);
+            }
+            if let Some(step) = step {
+                infer_expr(step, functions, env);
             }
             match target_ty {
                 Type::List { element, variance } => Type::List { element, variance },
