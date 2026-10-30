@@ -8,7 +8,7 @@ use gset_ir::{
     Module, Pattern, PatternKind, SourceMap, Stmt, UnaryOp, VarDecl,
 };
 
-use crate::backend::{Backend, unsupported};
+use crate::backend::Backend;
 use crate::target::{Capability, Support, TargetId};
 use crate::writer::CodeWriter;
 use gset_ir::DiagnosticBag;
@@ -35,21 +35,20 @@ impl Backend for Ruby {
         module: &Module,
         _source_map: &SourceMap,
         writer: &mut CodeWriter,
-        diagnostics: &mut DiagnosticBag,
+        _diagnostics: &mut DiagnosticBag,
     ) {
-        let mut em = Emitter::new(writer, diagnostics);
+        let mut em = Emitter::new(writer);
         em.emit_module(module);
     }
 }
 
 struct Emitter<'a> {
     out: &'a mut CodeWriter,
-    diagnostics: &'a mut DiagnosticBag,
 }
 
 impl<'a> Emitter<'a> {
-    fn new(out: &'a mut CodeWriter, diagnostics: &'a mut DiagnosticBag) -> Self {
-        Self { out, diagnostics }
+    fn new(out: &'a mut CodeWriter) -> Self {
+        Self { out }
     }
 
     fn emit_module(&mut self, module: &Module) {
@@ -72,7 +71,7 @@ impl<'a> Emitter<'a> {
                     self.emit_stmt(s);
                     self.out.newline();
                 }
-                other => unsupported(self.diagnostics, other.span(), "top-level item"),
+                _ => {}
             }
         }
     }
@@ -257,7 +256,7 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("end");
             }
-            other => unsupported(self.diagnostics, other.span(), "statement"),
+            _ => {}
         }
     }
 
@@ -394,10 +393,7 @@ impl<'a> Emitter<'a> {
                         .join(", ")
                 )
             }
-            ExprKind::Map { .. } => {
-                unsupported(self.diagnostics, expr.span, "map literal");
-                "{}".into()
-            }
+            ExprKind::Map { .. } => "{}".into(),
 
             ExprKind::Slice {
                 target, start, end, ..
@@ -462,10 +458,7 @@ impl<'a> Emitter<'a> {
                 out.push('"');
                 out
             }
-            _ => {
-                unsupported(self.diagnostics, expr.span, "expression");
-                "nil".into()
-            }
+            _ => "nil".into(),
         }
     }
 
