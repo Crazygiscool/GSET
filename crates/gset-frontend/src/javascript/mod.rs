@@ -273,21 +273,30 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
             Some(Stmt::Return { value: v, span })
         }
         "lexical_declaration" | "variable_declaration" => {
-            let mut stmts = Vec::new();
             let mut ci = 0;
+            let mut out = Vec::new();
             while ci < node.child_count() {
-                if let Some(child) = node.child(ci)
-                    && child.kind() == "variable_declarator"
+                if let Some(c) = node.child(ci)
+                    && c.kind() == "variable_declarator"
                 {
-                    let name_node = child.child_by_field_name("name");
-                    let value_node = child.child_by_field_name("value");
-                    if let Some(nn) = name_node {
-                        let pname = text_of(nn, text);
-                        let mut value = None;
-                        if let Some(vn) = value_node {
-                            value = Some(lower_expr(vn, source, text));
+                    let mut nn = c.child_by_field_name("name");
+                    if nn.is_none() {
+                        let mut j = 0;
+                        while j < c.child_count() {
+                            if let Some(child) = c.child(j)
+                                && child.kind() == "identifier"
+                            {
+                                nn = Some(child);
+                                break;
+                            }
+                            j += 1;
                         }
-                        stmts.push(Stmt::Decl(VarDecl {
+                    }
+                    if let Some(nn) = nn {
+                        let pname = text_of(nn, text);
+                        let value_node = c.child_by_field_name("value");
+                        let value = value_node.map(|vn| lower_expr(vn, source, text));
+                        out.push(Stmt::Decl(VarDecl {
                             pattern: Pattern::bind(Arc::from(pname), span_of(nn, source)),
                             ty: None,
                             value,
@@ -299,13 +308,13 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                 }
                 ci += 1;
             }
-            if stmts.is_empty() {
+            if out.is_empty() {
                 None
-            } else if stmts.len() == 1 {
-                Some(stmts.pop().unwrap())
+            } else if out.len() == 1 {
+                Some(out.pop().unwrap())
             } else {
                 Some(Stmt::Block(Block {
-                    statements: stmts,
+                    statements: out,
                     span,
                 }))
             }
@@ -348,22 +357,23 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                 span,
             })
         }
+        "expression_statement" => lower_expr_statement(node, source, text),
         "if_statement" => {
             let mut cond_opt = None;
             let mut ci_outer = 0;
             while ci_outer < node.child_count() {
-                if let Some(cc) = node.child(ci_outer)
-                    && cc.kind() == "parenthesized_expression"
-                {
-                    let mut ci_inner = 0;
-                    while ci_inner < cc.child_count() {
-                        if let Some(ec) = cc.child(ci_inner)
-                            && ec.kind() != "("
-                            && ec.kind() != ")"
-                        {
-                            cond_opt = Some(lower_expr(ec, source, text));
+                if let Some(cc) = node.child(ci_outer) {
+                    if cc.kind() == "parenthesized_expression" {
+                        let mut ci_inner = 0;
+                        while ci_inner < cc.child_count() {
+                            if let Some(ec) = cc.child(ci_inner)
+                                && ec.kind() != "("
+                                && ec.kind() != ")"
+                            {
+                                cond_opt = Some(lower_expr(ec, source, text));
+                            }
+                            ci_inner += 1;
                         }
-                        ci_inner += 1;
                     }
                 }
                 ci_outer += 1;
@@ -402,7 +412,6 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                 span,
             })
         }
-        "expression_statement" => lower_expr_statement(node, source, text),
         _ => None,
     }
 }
@@ -517,6 +526,44 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                     op,
                     lhs: Box::new(left),
                     rhs: Box::new(right),
+                },
+                span,
+            )
+        }
+        "assignment_expression" => {
+            let (value, previous, op) = {
+                let _target_node = node.child_by_field_name("left");
+                let value_node = node.child_by_field_name("right");
+                let op_text = match node.child_by_field_name("operator") {
+                    Some(n) => text_of(n, text),
+                    None => "=",
+                };
+                let previous = None;
+                let op = match op_text {
+                    "=" => None,
+                    "+=" => Some(BinaryOp::Add),
+                    "-=" => Some(BinaryOp::Sub),
+                    "*=" => Some(BinaryOp::Mul),
+                    "/=" => Some(BinaryOp::Div),
+                    _ => None,
+                };
+                let val = match value_node {
+                    Some(v) => lower_expr(v, source, text),
+                    None => Expr::null(span),
+                };
+                (val, previous, op)
+            };
+            // target pattern
+            let target_name = match node.child_by_field_name("left") {
+                Some(n) if n.kind() == "identifier" => text_of(n, text),
+                _ => "_",
+            };
+            Expr::new(
+                ExprKind::Assign {
+                    target: Box::new(Pattern::bind(Arc::from(target_name), span)),
+                    previous,
+                    op,
+                    value: Box::new(value),
                 },
                 span,
             )
@@ -698,5 +745,28 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             Expr::new(ExprKind::Map { entries }, span)
         }
         _ => Expr::error(format!("unsupported JS expression: {}", node.kind()), span),
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "javascript")]
+mod probe_for {
+    #[test]
+    fn probe_for_kinds() {
+        let src = "const x=1;\nfor (let i=0;i<n;i++){ console.log(i); }\nfor (const k of obj){ console.log(k); }\nwhile(x){ x--; }\n";
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        let tree = p.parse(src, None).unwrap();
+        fn walk(n: tree_sitter::Node, depth: u32) {
+            let prefix = "  ".repeat(depth as usize);
+            println!("{}{}", prefix, n.kind());
+            for i in 0..n.child_count() {
+                if let Some(c) = n.child(i as u32) {
+                    walk(c, depth + 1);
+                }
+            }
+        }
+        walk(tree.root_node(), 0);
     }
 }
