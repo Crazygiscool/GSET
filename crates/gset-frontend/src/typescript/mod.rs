@@ -100,8 +100,31 @@ impl Frontend for TypeScript {
                     "interface_declaration"
                     | "type_alias_declaration"
                     | "enum_declaration"
-                    | "export_statement"
                     | "import_statement" => {}
+                    "export_statement" => {
+                        let mut ci = 0;
+                        while ci < child.child_count() {
+                            if let Some(c) = child.child(ci) {
+                                match c.kind() {
+                                    "function_declaration" => {
+                                        if let Some(i) = lower_function(c, id, text) {
+                                            items.push(i);
+                                        }
+                                    }
+                                    "lexical_declaration" | "variable_declaration" => {
+                                        lower_lexical_declaration(c, id, text, &mut items);
+                                    }
+                                    "expression_statement" => {
+                                        if let Some(s) = lower_expr_statement(c, id, text) {
+                                            items.push(Item::Stmt(s));
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            ci += 1;
+                        }
+                    }
                     _ => {
                         diagnostics.push(Diagnostic::warning(
                             span_of(child, id),
