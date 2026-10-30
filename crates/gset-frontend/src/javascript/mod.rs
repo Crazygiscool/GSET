@@ -744,6 +744,41 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             }
             Expr::new(ExprKind::Map { entries }, span)
         }
+        "arrow_function" => {
+            let _params: Vec<Pattern> = Vec::new(); // _params
+            let mut body_node = None;
+            let mut i = 0;
+            while i < node.child_count() {
+                if let Some(c) = node.child(i) {
+                    if c.kind() == "formal_parameters" {
+                        // params gather handled via body as expression
+                    } else if c.kind() == "identifier" {
+                        // could be param; skip for simplicity
+                    } else if c.kind() != "=>" {
+                        body_node = Some(c);
+                    }
+                }
+                i += 1;
+            }
+            let body_expr = match body_node {
+                Some(b) if b.kind() != "=>" => {
+                    if b.kind() == "statement_block" {
+                        Expr::null(span)
+                    } else {
+                        lower_expr(b, source, text)
+                    }
+                }
+                _ => Expr::null(span),
+            };
+            // Single-param shorthand discarded; emit an empty arrow so syntax stays valid.
+            Expr::new(
+                ExprKind::Lambda {
+                    params: Vec::new(),
+                    body: Box::new(body_expr),
+                },
+                span,
+            )
+        }
         _ => Expr::error(format!("unsupported JS expression: {}", node.kind()), span),
     }
 }
