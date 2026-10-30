@@ -161,11 +161,29 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
     let mut params = Vec::new();
     let mut ci = 0;
     while ci < params_node.child_count() {
-        if let Some(c) = params_node.child(ci)
-            && c.kind() == "identifier"
-        {
-            let pname = text_of(c, text);
-            params.push(Pattern::bind(Arc::from(pname), span_of(c, source)));
+        if let Some(c) = params_node.child(ci) {
+            let mut identifier = None;
+            if c.kind() == "identifier" {
+                identifier = Some(c);
+            } else if c.kind() == "required_parameter"
+                || c.kind() == "optional_parameter"
+                || c.kind() == "rest_parameter"
+            {
+                let mut j = 0;
+                while j < c.child_count() {
+                    if let Some(cc) = c.child(j)
+                        && cc.kind() == "identifier"
+                        && identifier.is_none()
+                    {
+                        identifier = Some(cc);
+                    }
+                    j += 1;
+                }
+            }
+            if let Some(nn) = identifier {
+                let pname = text_of(nn, text);
+                params.push(Pattern::bind(Arc::from(pname), span_of(nn, source)));
+            }
         }
         ci += 1;
     }
