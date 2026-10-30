@@ -3,7 +3,7 @@
 use gset_ir::{
     BinaryOp, Block, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId, Literal,
     Lowered, Module, Name, NamedArg, Path as IrPath, Pattern, SourceId, SourceMap, Span, Stmt,
-    VarDecl,
+    UnaryOp, VarDecl,
 };
 
 use crate::Frontend;
@@ -365,14 +365,26 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                 }
                 ci += 1;
             }
-            Some(Stmt::For {
-                init,
-                condition,
-                update,
-                body,
-                label: None,
+            // Map JS C-style for to a While loop so every backend that
+            // understands while (and assignment) can run it.
+            let mut statements = Vec::new();
+            if let Some(i) = init {
+                statements.push(*i);
+            }
+            let mut body_stmts = body.statements;
+            if let Some(u) = update {
+                body_stmts.push(Stmt::Expr(u));
+            }
+            statements.push(Stmt::While {
+                condition: condition.unwrap_or(Expr::null(span)),
+                body: Block {
+                    statements: body_stmts,
+                    span,
+                },
+                else_body: None,
                 span,
-            })
+            });
+            Some(Stmt::Block(Block { statements, span }))
         }
         "for_in_statement" => {
             let mut p = String::from("x");
@@ -574,6 +586,32 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             ExprKind::Path(IrPath::single(Arc::from(text_of(node, text)))),
             span,
         ),
+        "update_expression" => {
+            let mut op = UnaryOp::PostIncrement;
+            let mut operand = Expr::null(span);
+            let mut i = 0;
+            while i < node.child_count() {
+                if let Some(c) = node.child(i) {
+                    if c.kind() == "++" || c.kind() == "--" {
+                        op = if c.kind() == "++" {
+                            UnaryOp::PostIncrement
+                        } else {
+                            UnaryOp::PostDecrement
+                        };
+                    } else {
+                        operand = lower_expr(c, source, text);
+                    }
+                }
+                i += 1;
+            }
+            Expr::new(
+                ExprKind::Unary {
+                    op,
+                    operand: Box::new(operand),
+                },
+                span,
+            )
+        }
         "number" => Expr::int(text_of(node, text), span),
         "parenthesized_expression" => {
             let mut ci = 0;
