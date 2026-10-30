@@ -1,8 +1,9 @@
 //! The JavaScript frontend.
 
 use gset_ir::{
-    BinaryOp, Block, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId, Lowered,
-    Module, Name, Path as IrPath, Pattern, SourceId, SourceMap, Span, Stmt, VarDecl,
+    BinaryOp, Block, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId, Literal,
+    Lowered, Module, Name, NamedArg, Path as IrPath, Pattern, SourceId, SourceMap, Span, Stmt,
+    VarDecl,
 };
 
 use crate::Frontend;
@@ -521,12 +522,25 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             )
         }
         "call_expression" => {
-            let callee = match node
+            let callee_raw = match node
                 .child_by_field_name("function")
                 .or_else(|| node.child(0))
             {
                 Some(c) => lower_expr(c, source, text),
                 None => Expr::path("undefined", span),
+            };
+            let callee = if let ExprKind::Field { target, field } = &callee_raw.kind {
+                if let ExprKind::Path(path) = &target.kind
+                    && path.segments.len() == 1
+                    && path.segments[0].as_ref() == "console"
+                    && field.as_ref() == "log"
+                {
+                    Expr::path("print", span)
+                } else {
+                    callee_raw
+                }
+            } else {
+                callee_raw
             };
             let mut args = Vec::new();
             let mut i = 0;
@@ -555,6 +569,133 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 },
                 span,
             )
+        }
+        "member_expression" => {
+            let mut target = Expr::null(span);
+            let mut index = 0usize;
+            let mut seen_dot = false;
+            while (index as u32) < node.child_count() {
+                if let Some(c) = node.child(index as u32) {
+                    if c.kind() == "." {
+                        seen_dot = true;
+                    } else if seen_dot {
+                        // property, keep name
+                    } else {
+                        target = lower_expr(c, source, text);
+                    }
+                }
+                index += 1;
+            }
+            let mut prop = String::from("prop");
+            let mut index = 0usize;
+            while (index as u32) < node.child_count() {
+                if let Some(c) = node.child(index as u32)
+                    && (c.kind() == "property_identifier" || c.kind() == "identifier")
+                    && index > 0
+                {
+                    prop = text_of(c, text).to_string();
+                }
+                index += 1;
+            }
+            let name = std::sync::Arc::from(prop.as_str());
+            Expr::new(
+                ExprKind::Field {
+                    target: Box::new(target),
+                    field: name,
+                },
+                span,
+            )
+        }
+        "subscript_expression" => {
+            let mut target = Expr::null(span);
+            let mut index_expr = Expr::null(span);
+            let mut after = false;
+            let mut i = 0;
+            while i < node.child_count() {
+                if let Some(c) = node.child(i) {
+                    if c.kind() == "[" {
+                        after = true;
+                    } else if after && c.kind() == "]" {
+                        after = false;
+                    } else if !after
+                        && matches!(target.kind, ExprKind::Literal(Literal::Null))
+                        && (c.kind() == "identifier"
+                            || c.kind() == "number"
+                            || c.kind() == "member_expression"
+                            || c.kind() == "subscript_expression"
+                            || c.kind() == "array"
+                            || c.kind() == "object"
+                            || c.kind() == "call_expression")
+                    {
+                        target = lower_expr(c, source, text);
+                    } else if after {
+                        index_expr = lower_expr(c, source, text);
+                    }
+                }
+                i += 1;
+            }
+            Expr::new(
+                ExprKind::Index {
+                    target: Box::new(target),
+                    index: Box::new(index_expr),
+                },
+                span,
+            )
+        }
+        "array" => {
+            let mut elements = Vec::new();
+            let mut i = 0;
+            while i < node.child_count() {
+                if let Some(c) = node.child(i)
+                    && c.kind() != "["
+                    && c.kind() != "]"
+                    && c.kind() != ","
+                {
+                    elements.push(lower_expr(c, source, text));
+                }
+                i += 1;
+            }
+            Expr::new(ExprKind::List { elements }, span)
+        }
+        "object" => {
+            let mut entries = Vec::new();
+            let mut i = 0;
+            while i < node.child_count() {
+                if let Some(c) = node.child(i)
+                    && c.kind() == "pair"
+                {
+                    let mut j = 0;
+                    let mut key_name = String::from("prop");
+                    let mut val_node = None;
+                    let mut saw_colon = false;
+                    while j < c.child_count() {
+                        if let Some(cc) = c.child(j) {
+                            if (cc.kind() == "property_identifier" || cc.kind() == "identifier")
+                                && !saw_colon
+                            {
+                                key_name = text_of(cc, text).to_string();
+                            }
+                            if cc.kind() == ":" {
+                                saw_colon = true;
+                            } else if saw_colon {
+                                val_node = Some(cc);
+                                saw_colon = false;
+                            }
+                        }
+                        j += 1;
+                    }
+                    let value = match val_node {
+                        Some(v) => lower_expr(v, source, text),
+                        None => Expr::null(span),
+                    };
+                    entries.push(NamedArg {
+                        name: Arc::from(key_name.as_str()),
+                        value,
+                    });
+                }
+                i += 1;
+            }
+            Expr::new(ExprKind::Map { entries }, span)
         }
         _ => Expr::error(format!("unsupported JS expression: {}", node.kind()), span),
     }
