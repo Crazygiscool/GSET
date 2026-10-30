@@ -2,8 +2,8 @@
 
 use gset_ir::{
     BinaryOp, Block, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId, Literal,
-    Lowered, Module, Name, NamedArg, Path as IrPath, Pattern, SourceId, SourceMap, Span, Stmt,
-    UnaryOp, VarDecl,
+    LogicalOp, Lowered, Module, Name, NamedArg, Path as IrPath, Pattern, SourceId, SourceMap, Span,
+    Stmt, UnaryOp, VarDecl,
 };
 
 use crate::Frontend;
@@ -759,6 +759,16 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             if let Some(o) = node.child_by_field_name("operator") {
                 op_text = text_of(o, text);
             }
+            if op_text == "??" {
+                return Expr::new(
+                    ExprKind::Logical {
+                        op: LogicalOp::Or,
+                        lhs: Box::new(left),
+                        rhs: Box::new(right),
+                    },
+                    span,
+                );
+            }
             let op = match op_text {
                 "+" => BinaryOp::Add,
                 "-" => BinaryOp::Sub,
@@ -1123,5 +1133,28 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             inner.unwrap_or(Expr::null(span))
         }
         _ => Expr::error(format!("unsupported TS expression: {}", node.kind()), span),
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "typescript")]
+mod probe_opt {
+    #[test]
+    fn probe_opt() {
+        let src = "const x = obj?.a?.b ?? 0;\n";
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .unwrap();
+        let tree = p.parse(src, None).unwrap();
+        fn walk(n: tree_sitter::Node, d: u32) {
+            let p = "  ".repeat(d as usize);
+            println!("{}{} [{}]", p, n.kind(), n.child_count());
+            for i in 0..n.child_count() {
+                if let Some(c) = n.child(i as u32) {
+                    walk(c, d + 1);
+                }
+            }
+        }
+        walk(tree.root_node(), 0);
     }
 }
