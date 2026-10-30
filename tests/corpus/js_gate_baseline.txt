@@ -1,5 +1,5 @@
-backend    arguments
-backend    async_flow
+ok         arguments
+ok         async_flow
 ok         classes
 ok         comprehensions
 ok         context_managers
@@ -7,19 +7,19 @@ ok         declaration_after_if
 ok         declarations
 ok         decorators
 ok         destructuring
-backend    exceptions
+ok         exceptions
 ok         fib
 ok         fstrings
-backend    higher_order
+ok         higher_order
 ok         imports
 ok         lambdas
-backend    literals
-backend    loops
+ok         literals
+ok         loops
 ok         module_shape
 ok         null_handling
 ok         numeric_literals
 ok         operators
 ok         returns
-backend    typed
+ok         typed
 
-16 ok / 0 frontend / 7 backend / 0 malformed / 0 invalid
+23 ok / 0 frontend / 0 backend / 0 malformed / 0 invalid
