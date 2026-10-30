@@ -289,6 +289,15 @@ fn lower_lexical_declaration(
             }
             if let Some(nn) = name_node {
                 let pname = text_of(nn, text);
+                let pname_raw = pname;
+                let pname = if pname_raw.contains("{")
+                    || pname_raw.contains("[")
+                    || pname_raw.contains(" ")
+                {
+                    "x"
+                } else {
+                    pname_raw
+                };
                 let value_node = c.child_by_field_name("value");
                 let value = value_node.map(|vn| lower_expr(vn, source, text));
                 items.push(Item::Global(VarDecl {
@@ -366,7 +375,15 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                                     }
                                 }
                                 if let Some(nn) = name_node {
-                                    let pname = text_of(nn, text);
+                                    let pname_raw = text_of(nn, text);
+                                    let pname = if pname_raw.contains('{')
+                                        || pname_raw.contains('[')
+                                        || pname_raw.contains(' ')
+                                    {
+                                        "x".to_string()
+                                    } else {
+                                        pname_raw.to_string()
+                                    };
                                     let value_node = decl.child_by_field_name("value");
                                     let value = value_node.map(|vn| lower_expr(vn, source, text));
                                     init = Some(Box::new(Stmt::Decl(VarDecl {
@@ -502,11 +519,40 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                     && c.kind() == "variable_declarator"
                 {
                     let mut nn = c.child_by_field_name("name");
-                    if nn.is_none() {
+                    if let Some(n) = nn.as_ref()
+                        && n.kind() != "identifier"
+                    {
                         fn find_first_identifier(
                             n: tree_sitter::Node,
                         ) -> Option<tree_sitter::Node> {
-                            if n.kind() == "identifier" {
+                            if n.kind() == "identifier" || n.kind().contains("identifier") {
+                                return Some(n);
+                            }
+                            let mut i = 0;
+                            while i < n.child_count() {
+                                if let Some(child) = n.child(i)
+                                    && let Some(r) = find_first_identifier(child)
+                                {
+                                    return Some(r);
+                                }
+                                i += 1;
+                            }
+                            None
+                        }
+                        nn = find_first_identifier(*n);
+                        if let Some(nn2) = nn {
+                            eprintln!("DEBUG nn kind={} text={}", nn2.kind(), text_of(nn2, text));
+                        }
+                    }
+                    if nn
+                        .as_ref()
+                        .map(|n| n.kind() != "identifier")
+                        .unwrap_or(true)
+                    {
+                        fn find_first_identifier(
+                            n: tree_sitter::Node,
+                        ) -> Option<tree_sitter::Node> {
+                            if n.kind() == "identifier" || n.kind().contains("identifier") {
                                 return Some(n);
                             }
                             let mut i = 0;
@@ -522,12 +568,17 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                         }
                         nn = find_first_identifier(c);
                     }
-                    if let Some(nn) = nn {
-                        let pname = text_of(nn, text);
+                    if let Some(nn) = &nn {
+                        let pname = text_of(*nn, text);
+                        let pname = if nn.kind() != "identifier" {
+                            "x"
+                        } else {
+                            pname
+                        };
                         let value_node = c.child_by_field_name("value");
                         let value = value_node.map(|vn| lower_expr(vn, source, text));
                         out.push(Stmt::Decl(VarDecl {
-                            pattern: Pattern::bind(Arc::from(pname), span_of(nn, source)),
+                            pattern: Pattern::bind(Arc::from(pname), span_of(*nn, source)),
                             ty: None,
                             value,
                             mutable: true,
