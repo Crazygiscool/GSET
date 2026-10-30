@@ -952,20 +952,54 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             Expr::new(ExprKind::Map { entries }, span)
         }
         "arrow_function" => {
-            let _params: Vec<Pattern> = Vec::new(); // _params
-            let mut body_node = None;
-            let mut i = 0;
-            while i < node.child_count() {
-                if let Some(c) = node.child(i) {
-                    if c.kind() == "formal_parameters" {
-                        // params gather handled via body as expression
-                    } else if c.kind() == "identifier" {
-                        // could be param; skip for simplicity
-                    } else if c.kind() != "=>" {
-                        body_node = Some(c);
+            let mut params = Vec::new();
+            let params_node = node.child_by_field_name("parameters");
+            let body_node = node.child_by_field_name("body");
+            if let Some(pn) = params_node {
+                let mut j = 0;
+                while j < pn.child_count() {
+                    if let Some(c) = pn.child(j) {
+                        if c.kind() == "identifier" {
+                            params.push(Pattern::bind(
+                                Arc::from(text_of(c, text)),
+                                span_of(c, source),
+                            ));
+                        } else if c.kind() == "required_parameter"
+                            || c.kind() == "optional_parameter"
+                            || c.kind() == "rest_parameter"
+                        {
+                            let mut k = 0;
+                            while k < c.child_count() {
+                                if let Some(cc) = c.child(k)
+                                    && cc.kind() == "identifier"
+                                {
+                                    params.push(Pattern::bind(
+                                        Arc::from(text_of(cc, text)),
+                                        span_of(cc, source),
+                                    ));
+                                    break;
+                                }
+                                k += 1;
+                            }
+                        }
                     }
+                    j += 1;
                 }
-                i += 1;
+            } else {
+                // single-param shorthand: identifier => expr
+                let mut j = 0;
+                while j < node.child_count() {
+                    if let Some(c) = node.child(j)
+                        && c.kind() == "identifier"
+                    {
+                        params.push(Pattern::bind(
+                            Arc::from(text_of(c, text)),
+                            span_of(c, source),
+                        ));
+                        break;
+                    }
+                    j += 1;
+                }
             }
             let body_expr = match body_node {
                 Some(b) if b.kind() != "=>" => {
@@ -975,12 +1009,31 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                         lower_expr(b, source, text)
                     }
                 }
+                None => {
+                    // expression body is the last named child not an identifier/arrow
+                    let mut node_opt = None;
+                    let mut j = 0;
+                    while j < node.child_count() {
+                        if let Some(c) = node.child(j)
+                            && c.kind() != "=>"
+                            && c.kind() != "formal_parameters"
+                            && c.kind() != "identifier"
+                            && c.is_named()
+                        {
+                            node_opt = Some(c);
+                        }
+                        j += 1;
+                    }
+                    match node_opt {
+                        Some(b) => lower_expr(b, source, text),
+                        None => Expr::null(span),
+                    }
+                }
                 _ => Expr::null(span),
             };
-            // Single-param shorthand discarded; emit an empty arrow so syntax stays valid.
             Expr::new(
                 ExprKind::Lambda {
-                    params: Vec::new(),
+                    params,
                     body: Box::new(body_expr),
                 },
                 span,
