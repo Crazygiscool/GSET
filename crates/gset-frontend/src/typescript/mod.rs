@@ -1024,6 +1024,22 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 span,
             )
         }
+        "as_expression" | "type_assertion" | "non_null_expression" | "satisfies_expression" => {
+            let mut inner = None;
+            let mut i = 0;
+            while i < node.child_count() {
+                if let Some(c) = node.child(i)
+                    && c.is_named()
+                    && c.kind() != ":"
+                    && c.kind() != "as"
+                {
+                    inner = Some(lower_expr(c, source, text));
+                    break;
+                }
+                i += 1;
+            }
+            inner.unwrap_or(Expr::null(span))
+        }
         _ => Expr::error(format!("unsupported TS expression: {}", node.kind()), span),
     }
 }
