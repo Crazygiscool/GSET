@@ -1042,26 +1042,3 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
         _ => Expr::error(format!("unsupported JS expression: {}", node.kind()), span),
     }
 }
-
-#[cfg(test)]
-#[cfg(feature = "javascript")]
-mod probe_for {
-    #[test]
-    fn probe_for_kinds() {
-        let src = "const x=1;\nfor (let i=0;i<n;i++){ console.log(i); }\nfor (const k of obj){ console.log(k); }\nwhile(x){ x--; }\n";
-        let mut p = tree_sitter::Parser::new();
-        p.set_language(&tree_sitter_javascript::LANGUAGE.into())
-            .unwrap();
-        let tree = p.parse(src, None).unwrap();
-        fn walk(n: tree_sitter::Node, depth: u32) {
-            let prefix = "  ".repeat(depth as usize);
-            println!("{}{}", prefix, n.kind());
-            for i in 0..n.child_count() {
-                if let Some(c) = n.child(i) {
-                    walk(c, depth + 1);
-                }
-            }
-        }
-        walk(tree.root_node(), 0);
-    }
-}
