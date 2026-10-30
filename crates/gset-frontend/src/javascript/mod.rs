@@ -2,8 +2,8 @@
 
 use gset_ir::{
     BinaryOp, Block, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId, Literal,
-    Lowered, Module, Name, NamedArg, Path as IrPath, Pattern, SourceId, SourceMap, Span, Stmt,
-    UnaryOp, VarDecl,
+    LogicalOp, Lowered, Module, Name, NamedArg, Path as IrPath, Pattern, SourceId, SourceMap, Span,
+    Stmt, UnaryOp, VarDecl,
 };
 
 use crate::Frontend;
@@ -746,6 +746,16 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             }
             if let Some(o) = node.child_by_field_name("operator") {
                 op_text = text_of(o, text);
+            }
+            if op_text == "??" {
+                return Expr::new(
+                    ExprKind::Logical {
+                        op: LogicalOp::Or,
+                        lhs: Box::new(left),
+                        rhs: Box::new(right),
+                    },
+                    span,
+                );
             }
             let op = match op_text {
                 "+" => BinaryOp::Add,
