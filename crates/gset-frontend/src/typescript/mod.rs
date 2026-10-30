@@ -97,6 +97,11 @@ impl Frontend for TypeScript {
                         lower_lexical_declaration(child, id, text, &mut items);
                     }
                     "program" => {}
+                    "interface_declaration"
+                    | "type_alias_declaration"
+                    | "enum_declaration"
+                    | "export_statement"
+                    | "import_statement" => {}
                     _ => {
                         diagnostics.push(Diagnostic::warning(
                             span_of(child, id),
@@ -1006,6 +1011,29 @@ mod probe_for {
             println!("{}{}", prefix, n.kind());
             for i in 0..n.child_count() {
                 if let Some(c) = n.child(i) {
+                    walk(c, depth + 1);
+                }
+            }
+        }
+        walk(tree.root_node(), 0);
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "typescript")]
+mod probe_ts {
+    #[test]
+    fn probe_ts_kinds() {
+        let src = "let x: number = 1;\nconst f = (n: number): number => n + 1;\ninterface Foo { bar: string; }\n";
+        let mut p = tree_sitter::Parser::new();
+        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .unwrap();
+        let tree = p.parse(src, None).unwrap();
+        fn walk(n: tree_sitter::Node, depth: u32) {
+            let prefix = "  ".repeat(depth as usize);
+            println!("{}{} [{}]", prefix, n.kind(), n.child_count());
+            for i in 0..n.child_count() {
+                if let Some(c) = n.child(i as u32) {
                     walk(c, depth + 1);
                 }
             }

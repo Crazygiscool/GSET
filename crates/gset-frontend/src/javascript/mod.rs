@@ -96,6 +96,11 @@ impl Frontend for JavaScript {
                         lower_lexical_declaration(child, id, text, &mut items);
                     }
                     "program" => {}
+                    "interface_declaration"
+                    | "type_alias_declaration"
+                    | "enum_declaration"
+                    | "export_statement"
+                    | "import_statement" => {}
                     _ => {
                         diagnostics.push(Diagnostic::warning(
                             span_of(child, id),
