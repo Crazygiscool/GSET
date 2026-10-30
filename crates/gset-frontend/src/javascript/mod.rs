@@ -186,6 +186,18 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
     let body_node = node.child_by_field_name("body")?;
 
     let name: Name = Arc::from(text_of(name_node, text));
+    let mut is_async = false;
+    {
+        let mut ci = 0;
+        while ci < node.child_count() {
+            if let Some(c) = node.child(ci)
+                && c.kind() == "async"
+            {
+                is_async = true;
+            }
+            ci += 1;
+        }
+    }
     let mut params = Vec::new();
     let mut ci = 0;
     while ci < params_node.child_count() {
@@ -216,18 +228,6 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
         ci += 1;
     }
 
-    let mut is_async = false;
-    {
-        let mut ci = 0;
-        while ci < node.child_count() {
-            if let Some(c) = node.child(ci)
-                && c.kind() == "async"
-            {
-                is_async = true;
-            }
-            ci += 1;
-        }
-    }
     let body = lower_block(body_node, source, text);
     let span = span_of(node, source);
 
