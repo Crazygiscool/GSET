@@ -87,6 +87,11 @@ impl Frontend for JavaScript {
                             items.push(Item::Stmt(stmt));
                         }
                     }
+                    "for_statement" | "while_statement" | "for_in_statement" | "if_statement" => {
+                        if let Some(stmt) = lower_stmt(child, id, text) {
+                            items.push(Item::Stmt(stmt));
+                        }
+                    }
                     "lexical_declaration" | "variable_declaration" => {
                         lower_lexical_declaration(child, id, text, &mut items);
                     }
@@ -271,6 +276,152 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                 ci += 1;
             }
             Some(Stmt::Return { value: v, span })
+        }
+        "for_statement" => {
+            let mut init = None;
+            let mut condition = None;
+            let mut update = None;
+            let mut body = Block {
+                statements: Vec::new(),
+                span,
+            };
+            let mut ci = 0;
+            while ci < node.child_count() {
+                if let Some(c) = node.child(ci) {
+                    if c.kind() == "lexical_declaration" || c.kind() == "variable_declaration" {
+                        let mut ci2 = 0;
+                        while ci2 < c.child_count() {
+                            if let Some(decl) = c.child(ci2)
+                                && decl.kind() == "variable_declarator"
+                            {
+                                let mut name_node = decl.child_by_field_name("name");
+                                if name_node.is_none() {
+                                    let mut j = 0;
+                                    while j < decl.child_count() {
+                                        if let Some(ch) = decl.child(j)
+                                            && ch.kind() == "identifier"
+                                        {
+                                            name_node = Some(ch);
+                                        }
+                                        j += 1;
+                                    }
+                                }
+                                if let Some(nn) = name_node {
+                                    let pname = text_of(nn, text);
+                                    let value_node = decl.child_by_field_name("value");
+                                    let value = value_node.map(|vn| lower_expr(vn, source, text));
+                                    init = Some(Box::new(Stmt::Decl(VarDecl {
+                                        pattern: Pattern::bind(
+                                            Arc::from(pname),
+                                            span_of(nn, source),
+                                        ),
+                                        ty: None,
+                                        value,
+                                        mutable: true,
+                                        exported: false,
+                                        span,
+                                    })));
+                                }
+                            }
+                            ci2 += 1;
+                        }
+                    } else if c.kind() == "binary_expression"
+                        || c.kind() == "comparison_expression"
+                        || c.kind() == "assignment_expression"
+                        || c.kind() == "parenthesized_expression"
+                    {
+                        if condition.is_none() {
+                            let e = if c.kind() == "parenthesized_expression" {
+                                // use first child
+                                let mut inner = None;
+                                let mut j = 0;
+                                while j < c.child_count() {
+                                    if let Some(ec) = c.child(j)
+                                        && ec.kind() != "("
+                                        && ec.kind() != ")"
+                                    {
+                                        inner = Some(lower_expr(ec, source, text));
+                                    }
+                                    j += 1;
+                                }
+                                inner.unwrap_or(Expr::null(span))
+                            } else {
+                                lower_expr(c, source, text)
+                            };
+                            condition = Some(e);
+                        }
+                    } else if c.kind() == "update_expression" {
+                        if let Some(ec) = c.child(0) {
+                            update = Some(lower_expr(ec, source, text));
+                        }
+                    } else if c.kind() == "statement_block" {
+                        body = lower_block(c, source, text);
+                    } else if let Some(st) = lower_stmt(c, source, text) {
+                        body = Block {
+                            statements: vec![st],
+                            span,
+                        };
+                    }
+                }
+                ci += 1;
+            }
+            Some(Stmt::For {
+                init,
+                condition,
+                update,
+                body,
+                label: None,
+                span,
+            })
+        }
+        "for_in_statement" => {
+            let mut p = String::from("x");
+            let mut it = Expr::null(span);
+            let mut body = Block {
+                statements: Vec::new(),
+                span,
+            };
+            let mut ci = 0;
+            let mut found_binding = false;
+            while ci < node.child_count() {
+                if let Some(c) = node.child(ci) {
+                    if c.kind() == "const" || c.kind() == "let" || c.kind() == "var" {
+                        // skip
+                    } else if c.kind() == "identifier" {
+                        if !found_binding {
+                            p = text_of(c, text).to_string();
+                            found_binding = true;
+                        } else if true {
+                        }
+                    } else if c.kind() == "statement_block" {
+                        body = lower_block(c, source, text);
+                    } else if c.kind() != "in"
+                        && c.kind() != "of"
+                        && c.kind() != "("
+                        && c.kind() != ")"
+                    {
+                        // iterable expression
+                        // avoid overriding p if simple identifier initial already used
+                        if !found_binding {
+                            // no op
+                        } else {
+                            // attempt to lower as expression
+                            it = lower_expr(c, source, text);
+                        }
+                    }
+                }
+                ci += 1;
+            }
+            Some(Stmt::ForIn {
+                pattern: Pattern::bind(Arc::from(p), span),
+                iterable: it,
+                body,
+                else_body: None,
+                is_parallel: false,
+                is_async: false,
+                label: None,
+                span,
+            })
         }
         "lexical_declaration" | "variable_declaration" => {
             let mut ci = 0;
