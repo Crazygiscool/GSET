@@ -194,6 +194,18 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
         ci += 1;
     }
 
+    let mut is_async = false;
+    {
+        let mut ci = 0;
+        while ci < node.child_count() {
+            if let Some(c) = node.child(ci)
+                && c.kind() == "async"
+            {
+                is_async = true;
+            }
+            ci += 1;
+        }
+    }
     let body = lower_block(body_node, source, text);
     let span = span_of(node, source);
 
@@ -204,7 +216,7 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
         ret: None,
         body,
         variadic: false,
-        is_async: false,
+        is_async,
         exported: false,
         decorators: Vec::new(),
         generics: Vec::new(),
@@ -992,52 +1004,26 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 span,
             )
         }
+        "await_expression" => {
+            let mut inner = None;
+            let mut ci = 0;
+            while ci < node.child_count() {
+                if let Some(c) = node.child(ci) {
+                    if c.kind() == "await" {
+                        // skip keyword
+                    } else {
+                        inner = Some(lower_expr(c, source, text));
+                    }
+                }
+                ci += 1;
+            }
+            Expr::new(
+                ExprKind::Await {
+                    expr: Box::new(inner.unwrap_or(Expr::null(span))),
+                },
+                span,
+            )
+        }
         _ => Expr::error(format!("unsupported TS expression: {}", node.kind()), span),
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "typescript")]
-mod probe_for {
-    #[test]
-    fn probe_for_kinds() {
-        let src = "const x=1;\nfor (let i=0;i<n;i++){ console.log(i); }\nfor (const k of obj){ console.log(k); }\nwhile(x){ x--; }\n";
-        let mut p = tree_sitter::Parser::new();
-        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
-            .unwrap();
-        let tree = p.parse(src, None).unwrap();
-        fn walk(n: tree_sitter::Node, depth: u32) {
-            let prefix = "  ".repeat(depth as usize);
-            println!("{}{}", prefix, n.kind());
-            for i in 0..n.child_count() {
-                if let Some(c) = n.child(i) {
-                    walk(c, depth + 1);
-                }
-            }
-        }
-        walk(tree.root_node(), 0);
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "typescript")]
-mod probe_ts {
-    #[test]
-    fn probe_ts_kinds() {
-        let src = "let x: number = 1;\nconst f = (n: number): number => n + 1;\ninterface Foo { bar: string; }\n";
-        let mut p = tree_sitter::Parser::new();
-        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
-            .unwrap();
-        let tree = p.parse(src, None).unwrap();
-        fn walk(n: tree_sitter::Node, depth: u32) {
-            let prefix = "  ".repeat(depth as usize);
-            println!("{}{} [{}]", prefix, n.kind(), n.child_count());
-            for i in 0..n.child_count() {
-                if let Some(c) = n.child(i as u32) {
-                    walk(c, depth + 1);
-                }
-            }
-        }
-        walk(tree.root_node(), 0);
     }
 }

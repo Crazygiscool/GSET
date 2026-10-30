@@ -193,6 +193,18 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
         ci += 1;
     }
 
+    let mut is_async = false;
+    {
+        let mut ci = 0;
+        while ci < node.child_count() {
+            if let Some(c) = node.child(ci)
+                && c.kind() == "async"
+            {
+                is_async = true;
+            }
+            ci += 1;
+        }
+    }
     let body = lower_block(body_node, source, text);
     let span = span_of(node, source);
 
@@ -203,7 +215,7 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
         ret: None,
         body,
         variadic: false,
-        is_async: false,
+        is_async,
         exported: false,
         decorators: Vec::new(),
         generics: Vec::new(),
@@ -1040,6 +1052,26 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 ExprKind::Lambda {
                     params,
                     body: Box::new(body_expr),
+                },
+                span,
+            )
+        }
+        "await_expression" => {
+            let mut inner = None;
+            let mut ci = 0;
+            while ci < node.child_count() {
+                if let Some(c) = node.child(ci) {
+                    if c.kind() == "await" {
+                        // skip
+                    } else {
+                        inner = Some(lower_expr(c, source, text));
+                    }
+                }
+                ci += 1;
+            }
+            Expr::new(
+                ExprKind::Await {
+                    expr: Box::new(inner.unwrap_or(Expr::null(span))),
                 },
                 span,
             )
