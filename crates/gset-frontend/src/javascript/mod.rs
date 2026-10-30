@@ -362,18 +362,18 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
             let mut cond_opt = None;
             let mut ci_outer = 0;
             while ci_outer < node.child_count() {
-                if let Some(cc) = node.child(ci_outer) {
-                    if cc.kind() == "parenthesized_expression" {
-                        let mut ci_inner = 0;
-                        while ci_inner < cc.child_count() {
-                            if let Some(ec) = cc.child(ci_inner)
-                                && ec.kind() != "("
-                                && ec.kind() != ")"
-                            {
-                                cond_opt = Some(lower_expr(ec, source, text));
-                            }
-                            ci_inner += 1;
+                if let Some(cc) = node.child(ci_outer)
+                    && cc.kind() == "parenthesized_expression"
+                {
+                    let mut ci_inner = 0;
+                    while ci_inner < cc.child_count() {
+                        if let Some(ec) = cc.child(ci_inner)
+                            && ec.kind() != "("
+                            && ec.kind() != ")"
+                        {
+                            cond_opt = Some(lower_expr(ec, source, text));
                         }
+                        ci_inner += 1;
                     }
                 }
                 ci_outer += 1;
@@ -762,7 +762,7 @@ mod probe_for {
             let prefix = "  ".repeat(depth as usize);
             println!("{}{}", prefix, n.kind());
             for i in 0..n.child_count() {
-                if let Some(c) = n.child(i as u32) {
+                if let Some(c) = n.child(i) {
                     walk(c, depth + 1);
                 }
             }
