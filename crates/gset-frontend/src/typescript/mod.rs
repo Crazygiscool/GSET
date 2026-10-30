@@ -503,16 +503,24 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                 {
                     let mut nn = c.child_by_field_name("name");
                     if nn.is_none() {
-                        let mut j = 0;
-                        while j < c.child_count() {
-                            if let Some(child) = c.child(j)
-                                && child.kind() == "identifier"
-                            {
-                                nn = Some(child);
-                                break;
+                        fn find_first_identifier(
+                            n: tree_sitter::Node,
+                        ) -> Option<tree_sitter::Node> {
+                            if n.kind() == "identifier" {
+                                return Some(n);
                             }
-                            j += 1;
+                            let mut i = 0;
+                            while i < n.child_count() {
+                                if let Some(child) = n.child(i)
+                                    && let Some(r) = find_first_identifier(child)
+                                {
+                                    return Some(r);
+                                }
+                                i += 1;
+                            }
+                            None
                         }
+                        nn = find_first_identifier(c);
                     }
                     if let Some(nn) = nn {
                         let pname = text_of(nn, text);
