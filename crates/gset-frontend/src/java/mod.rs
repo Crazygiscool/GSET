@@ -334,7 +334,12 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
         "method_invocation" => {
             let object = node.child_by_field_name("object");
             let name = node.child_by_field_name("name").unwrap();
-            let name_txt = text_of(name, text).to_string();
+            let mut name_txt = text_of(name, text).to_string();
+            if let Some(obj) = object {
+                if text_of(obj, text) == "System.out" && name_txt == "println" {
+                    name_txt = "print".to_string();
+                }
+            }
             let args_node = node.child_by_field_name("arguments").unwrap();
             let mut args = Vec::new();
             let mut ci = 0;
