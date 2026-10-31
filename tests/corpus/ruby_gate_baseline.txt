@@ -4,22 +4,22 @@ backend    classes
 ok         comprehensions
 backend    context_managers
 ok         declaration_after_if
-backend    declarations
+ok         declarations
 backend    decorators
 ok         destructuring
 backend    exceptions
 ok         fib
 ok         fstrings
 backend    higher_order
-backend    imports
+ok         imports
 backend    lambdas
-backend    literals
+ok         literals
 backend    loops
 ok         module_shape
 ok         null_handling
 ok         numeric_literals
 ok         operators
 ok         returns
-backend    typed
+ok         typed
 
-10 ok / 0 frontend / 13 backend / 0 malformed / 0 invalid
+14 ok / 0 frontend / 9 backend / 0 malformed / 0 invalid

@@ -27,6 +27,7 @@ impl Backend for JavaScript {
         match capability {
             Classes | FStrings | Closures | Async | MultipleAssignment | Exceptions
             | Comprehensions | Slices => Support::Native,
+            Imports => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
@@ -68,7 +69,59 @@ impl<'a> Emitter<'a> {
                     self.out.blank();
                 }
                 Item::Import(import) => {
-                    unsupported(self.diagnostics, import.span, "imports");
+                    let path = import
+                        .path
+                        .segments
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    match &import.kind {
+                        gset_ir::ImportKind::Module => {
+                            let binding = import
+                                .alias
+                                .as_ref()
+                                .or(import.path.segments.last())
+                                .map(|n| n.to_string())
+                                .unwrap_or_else(|| "module".to_string());
+                            self.out
+                                .writeln(&format!("const {} = require({:?});", binding, path));
+                        }
+                        gset_ir::ImportKind::Named(names) => {
+                            let rendered = names
+                                .iter()
+                                .map(|name| {
+                                    if let Some(alias) = &name.alias {
+                                        format!("{}: {}", name.original, alias)
+                                    } else {
+                                        name.original.to_string()
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            self.out.writeln(&format!(
+                                "const {{ {} }} = require({:?});",
+                                rendered, path
+                            ));
+                        }
+                        gset_ir::ImportKind::Default(name) => {
+                            self.out.writeln(&format!(
+                                "const {} = require({:?});",
+                                name.local(),
+                                path
+                            ));
+                        }
+                        gset_ir::ImportKind::Star => {
+                            let binding = import
+                                .path
+                                .segments
+                                .last()
+                                .map(|n| n.to_string())
+                                .unwrap_or_else(|| "module".to_string());
+                            self.out
+                                .writeln(&format!("const {} = require({:?});", binding, path));
+                        }
+                    }
                 }
                 Item::Stmt(s) => {
                     self.emit_stmt(s);

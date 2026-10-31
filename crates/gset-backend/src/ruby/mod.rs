@@ -29,6 +29,7 @@ impl Backend for Ruby {
                 Support::Native
             }
             Async => Support::Desugared,
+            Imports => Support::Desugared,
             Comprehensions => Support::Desugared,
             _ => Support::Unsupported,
         }
@@ -71,7 +72,14 @@ impl<'a> Emitter<'a> {
                     self.out.blank();
                 }
                 Item::Import(import) => {
-                    unsupported(self.diagnostics, import.span, "imports");
+                    let path = import
+                        .path
+                        .segments
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    self.out.writeln(&format!("require {:?}", path));
                 }
                 Item::Stmt(s) => {
                     self.emit_stmt(s);

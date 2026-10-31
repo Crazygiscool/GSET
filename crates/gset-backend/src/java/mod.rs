@@ -25,7 +25,9 @@ impl Backend for Java {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Classes | Closures | MultipleAssignment | Exceptions | Slices => Support::Native,
+            Classes | Closures | MultipleAssignment | Exceptions | Slices | Imports => {
+                Support::Native
+            }
             Async => Support::Desugared,
             Comprehensions => Support::Desugared,
             _ => Support::Unsupported,
@@ -104,7 +106,31 @@ impl<'a> Emitter<'a> {
                 }
                 Item::Stmt(s) => self.emit_stmt(s),
                 Item::Import(import) => {
-                    unsupported(self.diagnostics, import.span, "imports");
+                    let path = import
+                        .path
+                        .segments
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    match &import.kind {
+                        gset_ir::ImportKind::Module => {
+                            self.out.writeln(&format!("import {};", path));
+                        }
+                        gset_ir::ImportKind::Named(names) => {
+                            for name in names {
+                                self.out
+                                    .writeln(&format!("import {}.{};", path, name.original));
+                            }
+                        }
+                        gset_ir::ImportKind::Default(name) => {
+                            self.out
+                                .writeln(&format!("import {}.{};", path, name.local()));
+                        }
+                        gset_ir::ImportKind::Star => {
+                            self.out.writeln(&format!("import {}.*;", path));
+                        }
+                    }
                 }
                 _ => unsupported(self.diagnostics, item.span(), "an item"),
             }
