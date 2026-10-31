@@ -44,6 +44,7 @@
 #![forbid(unsafe_code)]
 
 mod backend;
+mod capabilities;
 mod go;
 mod java;
 mod js;
