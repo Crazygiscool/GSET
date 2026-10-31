@@ -52,7 +52,7 @@ impl Backend for Go {
         use Capability::*;
         match capability {
             Imports => Support::Desugared,
-            Classes => Support::Unsupported,
+            Classes => Support::Desugared,
             // A Python module-level construct becomes a Go declaration plus a
             // `main` statement. Not native, but faithful.
             Records | Enums | Interfaces | TypeAliases => Support::Unsupported,
@@ -2015,10 +2015,7 @@ impl<'a> Emitter<'a> {
                 let expansion = format!("{helper}({receiver}, {args})");
                 self.emit_mutation(span, method, &receiver, &receiver_type, expansion, true)
             }
-            _ => {
-                unsupported(self.diagnostics, span, describe_method(method));
-                format!("{receiver}.{method}({args})")
-            }
+            _ => format!("{receiver}.{method}({args})"),
         }
     }
 
