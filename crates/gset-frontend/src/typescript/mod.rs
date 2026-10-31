@@ -1137,26 +1137,3 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
         _ => Expr::error(format!("unsupported TS expression: {}", node.kind()), span),
     }
 }
-
-#[cfg(test)]
-#[cfg(feature = "typescript")]
-mod probe_opt {
-    #[test]
-    fn probe_opt() {
-        let src = "const x = obj?.a?.b ?? 0;\n";
-        let mut p = tree_sitter::Parser::new();
-        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
-            .unwrap();
-        let tree = p.parse(src, None).unwrap();
-        fn walk(n: tree_sitter::Node, d: u32) {
-            let p = "  ".repeat(d as usize);
-            println!("{}{} [{}]", p, n.kind(), n.child_count());
-            for i in 0..n.child_count() {
-                if let Some(c) = n.child(i as u32) {
-                    walk(c, d + 1);
-                }
-            }
-        }
-        walk(tree.root_node(), 0);
-    }
-}
