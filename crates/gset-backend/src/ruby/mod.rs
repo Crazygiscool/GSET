@@ -31,6 +31,7 @@ impl Backend for Ruby {
             Async => Support::Desugared,
             Imports => Support::Desugared,
             Comprehensions => Support::Desugared,
+            PatternMatching => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
@@ -266,6 +267,52 @@ impl<'a> Emitter<'a> {
                 self.out.writeln("begin");
                 self.out.indent();
                 self.emit_block(body);
+                self.out.dedent();
+                self.out.writeln("end");
+            }
+            Stmt::Switch {
+                scrutinee,
+                cases,
+                default,
+                ..
+            } => {
+                let subject = scrutinee
+                    .as_ref()
+                    .map(|e| self.emit_expr(e))
+                    .unwrap_or_else(|| "nil".to_string());
+                self.out.writeln(&format!("case {}", subject));
+                self.out.indent();
+                let mut default_block = default.clone();
+                for case in cases {
+                    if case.pattern.kind == gset_ir::PatternKind::Ignore {
+                        if default_block.is_none() {
+                            default_block = Some(case.body.clone());
+                        }
+                        continue;
+                    }
+                    let pat = match &case.pattern.kind {
+                        gset_ir::PatternKind::Bind => {
+                            pattern_name(&case.pattern).unwrap_or("_".to_string())
+                        }
+                        gset_ir::PatternKind::Location(expr) => self.emit_expr(expr),
+                        _ => "_".to_string(),
+                    };
+                    let guard = case
+                        .guard
+                        .as_ref()
+                        .map(|g| format!(" if {}", self.emit_expr(g)))
+                        .unwrap_or_default();
+                    self.out.writeln(&format!("when {}{}", pat, guard));
+                    self.out.indent();
+                    self.emit_block(&case.body);
+                    self.out.dedent();
+                }
+                if let Some(default) = &default_block {
+                    self.out.writeln("else");
+                    self.out.indent();
+                    self.emit_block(default);
+                    self.out.dedent();
+                }
                 self.out.dedent();
                 self.out.writeln("end");
             }
