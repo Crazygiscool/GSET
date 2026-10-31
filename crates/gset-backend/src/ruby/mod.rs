@@ -443,7 +443,17 @@ impl<'a> Emitter<'a> {
                     self.emit_expr(else_branch)
                 )
             }
-            ExprKind::Comprehension { .. } => "[]".to_string(),
+            ExprKind::Comprehension {
+                kind: _,
+                element: _,
+                key: _,
+                value: _,
+                clauses: _,
+                condition: _,
+            } => {
+                unsupported(self.diagnostics, expr.span, "comprehensions");
+                "[]".to_string()
+            }
             ExprKind::Format {
                 segments,
                 arguments,

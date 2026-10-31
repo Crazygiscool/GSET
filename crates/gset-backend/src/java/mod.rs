@@ -25,9 +25,7 @@ impl Backend for Java {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Classes | Closures | MultipleAssignment | Exceptions | Comprehensions | Slices => {
-                Support::Native
-            }
+            Classes | Closures | MultipleAssignment | Exceptions | Slices => Support::Native,
             Async => Support::Desugared,
             _ => Support::Unsupported,
         }
@@ -601,7 +599,10 @@ impl<'a> Emitter<'a> {
             ExprKind::Range { .. } => {
                 "java.util.stream.IntStream.range(0, 0).boxed().toList()".to_string()
             }
-            ExprKind::Comprehension { .. } => "java.util.List.of()".to_string(),
+            ExprKind::Comprehension { .. } => {
+                unsupported(self.diagnostics, expr.span, "comprehensions");
+                "java.util.List.of()".to_string()
+            }
             ExprKind::Format {
                 segments,
                 arguments,
