@@ -1147,9 +1147,11 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                         let mut inner = None;
                         while j < c.child_count() {
                             if let Some(ec) = c.child(j)
-                                && ec.kind() != "$" && ec.kind() != " && ec.kind() != " {
-                                    inner = Some(lower_expr(ec, source, text));
-                                }
+                                && ec.kind() != "$"
+                                && ec.kind() != " && ec.kind() != "
+                            {
+                                inner = Some(lower_expr(ec, source, text));
+                            }
                             j += 1;
                         }
                         if let Some(e) = inner {
