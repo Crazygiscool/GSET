@@ -4,8 +4,8 @@
 //! `gset-backend-unsupported`.
 
 use gset_ir::{
-    BinaryOp, Block, Class, ComparisonOp, Else, Expr, ExprKind, Function, Item, Literal, LogicalOp,
-    Module, Pattern, PatternKind, SourceMap, Stmt, UnaryOp, VarDecl,
+    BinaryOp, Block, Class, ComparisonOp, ComprehensionKind, Else, Expr, ExprKind, Function, Item,
+    Literal, LogicalOp, Module, Pattern, PatternKind, SourceMap, Stmt, UnaryOp, VarDecl,
 };
 
 use crate::backend::{Backend, unsupported};
@@ -27,6 +27,7 @@ impl Backend for Java {
         match capability {
             Classes | Closures | MultipleAssignment | Exceptions | Slices => Support::Native,
             Async => Support::Desugared,
+            Comprehensions => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
@@ -599,9 +600,30 @@ impl<'a> Emitter<'a> {
             ExprKind::Range { .. } => {
                 "java.util.stream.IntStream.range(0, 0).boxed().toList()".to_string()
             }
-            ExprKind::Comprehension { .. } => {
-                unsupported(self.diagnostics, expr.span, "comprehensions");
-                "java.util.List.of()".to_string()
+            ExprKind::Comprehension {
+                kind,
+                element,
+                key: _,
+                value: _,
+                clauses,
+                condition,
+            } => {
+                if *kind != ComprehensionKind::List || clauses.is_empty() {
+                    unsupported(self.diagnostics, expr.span, "comprehensions");
+                    return "java.util.List.of()".to_string();
+                }
+                let clause = &clauses[0];
+                let pat = pattern_name(&clause.pattern).unwrap_or("_x".to_string());
+                let iterable = self.emit_expr(&clause.iterable);
+                let element = self.emit_expr(element);
+                let if_cond = condition
+                    .as_ref()
+                    .map(|c| format!("if (gsetTruthy({})) ", self.emit_expr(c)))
+                    .unwrap_or_default();
+                format!(
+                    "(() -> {{ java.util.List<Object> _r = new java.util.ArrayList<>(); for (Object {} : gsetIterable({})) {{ {}_r.add({}); }} return _r; }})()",
+                    pat, iterable, if_cond, element
+                )
             }
             ExprKind::Format {
                 segments,
