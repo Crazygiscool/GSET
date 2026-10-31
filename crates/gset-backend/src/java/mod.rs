@@ -649,7 +649,7 @@ impl<'a> Emitter<'a> {
                     .unwrap_or_default();
                 self.locals.remove(&pat);
                 format!(
-                    "(() -> {{ java.util.List<Object> _r = new java.util.ArrayList<>(); for (Object {} : gsetIterable({})) {{ {}_r.add({}); }} return _r; }})()",
+                    "(new java.util.function.Supplier<java.util.List<Object>>() {{ public java.util.List<Object> get() {{ java.util.List<Object> _r = new java.util.ArrayList<>(); for (Object {} : gsetIterable({})) {{ {}_r.add({}); }} return _r; }} }}).get()",
                     pat, iterable, if_cond, element
                 )
             }
