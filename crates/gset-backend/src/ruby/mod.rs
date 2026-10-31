@@ -25,9 +25,11 @@ impl Backend for Ruby {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Classes | FStrings | Closures | MultipleAssignment | Exceptions | Comprehensions
-            | Slices => Support::Native,
+            Classes | FStrings | Closures | MultipleAssignment | Exceptions | Slices => {
+                Support::Native
+            }
             Async => Support::Desugared,
+            Comprehensions => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
@@ -445,14 +447,28 @@ impl<'a> Emitter<'a> {
             }
             ExprKind::Comprehension {
                 kind: _,
-                element: _,
+                element,
                 key: _,
                 value: _,
-                clauses: _,
-                condition: _,
+                clauses,
+                condition,
             } => {
-                unsupported(self.diagnostics, expr.span, "comprehensions");
-                "[]".to_string()
+                if clauses.is_empty() {
+                    "[]".to_string()
+                } else {
+                    let clause = &clauses[0];
+                    let iterable = self.emit_expr(&clause.iterable);
+                    let pat = pattern_name(&clause.pattern).unwrap_or("_x".to_string());
+                    let element = self.emit_expr(element);
+                    let if_cond = condition
+                        .as_ref()
+                        .map(|c| format!(" if {}", self.emit_expr(c)))
+                        .unwrap_or_default();
+                    format!(
+                        "({}.each_with_object([]) {{ |{}, _r| _r << {}{} }})",
+                        iterable, pat, element, if_cond
+                    )
+                }
             }
             ExprKind::Format {
                 segments,
