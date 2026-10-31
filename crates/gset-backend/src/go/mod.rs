@@ -300,20 +300,19 @@ impl<'a> Emitter<'a> {
                         for stmt in &init.body.statements {
                             if let Stmt::Assign { target, value, .. } = stmt
                                 && let PatternKind::Location(expr) = &target.kind
-                                    && let ExprKind::Field {
-                                        target: target_expr,
-                                        field,
-                                    } = &expr.kind
-                                        && let ExprKind::Path(path) = &target_expr.kind
-                                            && path.segments.first().map(|s| s.as_ref())
-                                                == Some("self")
-                                        {
-                                            let field_name = field.to_string();
-                                            if !init_fields.contains(&field_name) {
-                                                init_fields.push(field_name);
-                                            }
-                                            let _ = value;
-                                        }
+                                && let ExprKind::Field {
+                                    target: target_expr,
+                                    field,
+                                } = &expr.kind
+                                && let ExprKind::Path(path) = &target_expr.kind
+                                && path.segments.first().map(|s| s.as_ref()) == Some("self")
+                            {
+                                let field_name = field.to_string();
+                                if !init_fields.contains(&field_name) {
+                                    init_fields.push(field_name);
+                                }
+                                let _ = value;
+                            }
                         }
                     }
                     // Preserve explicitly declared record fields as well.

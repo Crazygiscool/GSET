@@ -28,7 +28,6 @@ impl Backend for Ruby {
             Classes | FStrings | Closures | MultipleAssignment | Exceptions | Slices => {
                 Support::Native
             }
-            Async => Support::Desugared,
             Imports => Support::Desugared,
             Comprehensions => Support::Desugared,
             PatternMatching => Support::Desugared,

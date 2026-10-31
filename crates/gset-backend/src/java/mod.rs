@@ -29,7 +29,6 @@ impl Backend for Java {
                 Support::Native
             }
             FStrings => Support::Desugared,
-            Async => Support::Desugared,
             Comprehensions => Support::Desugared,
             PatternMatching => Support::Desugared,
             _ => Support::Unsupported,
