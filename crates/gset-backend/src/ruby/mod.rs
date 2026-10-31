@@ -76,7 +76,7 @@ impl<'a> Emitter<'a> {
                     self.emit_stmt(s);
                     self.out.newline();
                 }
-                _ => {}
+                _ => unsupported(self.diagnostics, item.span(), "an item"),
             }
         }
     }
@@ -260,7 +260,7 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("end");
             }
-            _ => {}
+            _ => unsupported(self.diagnostics, stmt.span(), "a statement"),
         }
     }
 
