@@ -26,7 +26,7 @@ impl Backend for JavaScript {
         use Capability::*;
         match capability {
             Classes | FStrings | Closures | Async | MultipleAssignment | Exceptions
-            | Comprehensions | Slices => Support::Native,
+            | Comprehensions | Slices | Generators => Support::Native,
             Imports => Support::Desugared,
             PatternMatching => Support::Desugared,
             _ => Support::Unsupported,
@@ -161,11 +161,14 @@ impl<'a> Emitter<'a> {
             .filter_map(pattern_name)
             .collect::<Vec<_>>()
             .join(", ");
-        let kw = if f.is_async {
-            "async function"
+        let mut kw: String = if f.is_async {
+            "async function".to_string()
         } else {
-            "function"
+            "function".to_string()
         };
+        if function_has_yield(&f.body) {
+            kw = format!("{}*", kw);
+        }
         self.out.writeln(&format!("{} {}({}) {{", kw, name, params));
         self.out.indent();
         self.emit_block(&f.body);
@@ -330,6 +333,14 @@ impl<'a> Emitter<'a> {
                 }
                 self.out.dedent();
                 self.out.writeln("}");
+            }
+            Stmt::Yield { value, .. } => {
+                if let Some(v) = value {
+                    let v = self.emit_expr(v);
+                    self.out.writeln(&format!("yield {};", v));
+                } else {
+                    self.out.writeln("yield;");
+                }
             }
             Stmt::Try {
                 body,
@@ -505,6 +516,13 @@ impl<'a> Emitter<'a> {
                     && args.len() == 1
                 {
                     return format!("{}.length", self.emit_expr(&args[0]));
+                }
+                if let ExprKind::Path(path) = &callee.kind
+                    && path.segments.len() == 1
+                    && path.segments[0].to_string() == "range"
+                    && args.len() == 1
+                {
+                    return format!("[...Array({}).keys()]", self.emit_expr(&args[0]));
                 }
 
                 if let ExprKind::Path(path) = &callee.kind
@@ -705,5 +723,35 @@ fn pattern_name(p: &Pattern) -> Option<String> {
         Some(p.names[0].to_string())
     } else {
         None
+    }
+}
+
+fn function_has_yield(block: &gset_ir::Block) -> bool {
+    block.statements.iter().any(statement_has_yield)
+}
+fn statement_has_yield(stmt: &gset_ir::Stmt) -> bool {
+    match stmt {
+        gset_ir::Stmt::Yield { .. } => true,
+        gset_ir::Stmt::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            function_has_yield(then_branch)
+                || else_branch.as_ref().map_or(false, |e| match e.as_ref() {
+                    gset_ir::Else::Block(b) => function_has_yield(b),
+                    gset_ir::Else::If(s) => statement_has_yield(s),
+                })
+        }
+        gset_ir::Stmt::While {
+            body, else_body, ..
+        } => function_has_yield(body) || else_body.as_ref().is_some_and(function_has_yield),
+        gset_ir::Stmt::ForIn {
+            body, else_body, ..
+        } => function_has_yield(body) || else_body.as_ref().is_some_and(function_has_yield),
+        gset_ir::Stmt::For { body, .. } => function_has_yield(body),
+        gset_ir::Stmt::DoWhile { body, .. } => function_has_yield(body),
+        gset_ir::Stmt::Block(b) => function_has_yield(b),
+        _ => false,
     }
 }
