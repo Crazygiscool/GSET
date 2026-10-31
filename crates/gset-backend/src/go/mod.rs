@@ -72,7 +72,7 @@ impl Backend for Go {
             // `**` needs `math.Pow`, `//` needs a floor helper. A later slice
             // adds the helper pass rather than approximating with the wrong
             // operator.
-            OperatorCall => Support::Unsupported,
+            OperatorCall => Support::Desugared,
             LoopElse => Support::Desugared,
         }
     }
