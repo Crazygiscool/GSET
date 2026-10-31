@@ -77,11 +77,10 @@ impl<'a> Emitter<'a> {
                     self.known_functions.insert(java_ident(&m.name));
                 }
             }
-            if let Item::Global(g) = item {
-                if let Some(name) = pattern_name(&g.pattern) {
+            if let Item::Global(g) = item
+                && let Some(name) = pattern_name(&g.pattern) {
                     self.known_functions.insert(name);
                 }
-            }
         }
         self.out.writeln("final class Program {");
         self.out.indent();
