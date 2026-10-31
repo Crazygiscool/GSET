@@ -274,11 +274,20 @@ impl<'a> Emitter<'a> {
                 Item::Import(import) => self.emit_import(import),
                 Item::Global(global) => self.emit_global(global),
                 Item::Function(function) => self.emit_function(function),
-                Item::Class(_)
-                | Item::Record(_)
-                | Item::Enum(_)
-                | Item::Interface(_)
-                | Item::TypeAlias(_) => {
+                Item::Record(record) => {
+                    self.out.blank();
+                    self.out.writeln(&format!("type {} struct {{", record.name));
+                    self.out.indent();
+                    for field in &record.fields {
+                        let ty = field.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN);
+                        self.out
+                            .writeln(&format!("{} {}", field.name, go_type(&ty)));
+                    }
+                    self.out.dedent();
+                    self.out.writeln("}");
+                    self.out.blank();
+                }
+                Item::Class(_) | Item::Enum(_) | Item::Interface(_) | Item::TypeAlias(_) => {
                     unsupported(self.diagnostics, item.span(), describe_item(item));
                 }
                 Item::Stmt(statement) => self.main_statements.push(statement.clone()),
@@ -1570,6 +1579,23 @@ impl<'a> Emitter<'a> {
                 self.emit_sequence_literal(elements)
             }
             ExprKind::Set { elements } => self.emit_set_literal(elements),
+            ExprKind::StructLit { path, fields } => {
+                let name = path
+                    .segments
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_");
+                let rendered = fields
+                    .iter()
+                    .map(|f| {
+                        let v = self.emit_expr(&f.value);
+                        format!("{}: {}", f.name, v)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}{{{}}}", name, rendered)
+            }
             ExprKind::Map { entries } => self.emit_map_literal(entries),
             ExprKind::Lambda { params, body } => self.emit_lambda(params, body, expr.span),
             ExprKind::Conditional {
