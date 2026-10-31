@@ -152,6 +152,15 @@ fn lower_body(node: Option<tree_sitter::Node>, source: SourceId, text: &str) -> 
             ci += 1;
         }
     }
+    if let Some(Stmt::Expr(e)) = statements.last().cloned() {
+        if let Some(last) = statements.pop() {
+            let span = last.span();
+            statements.push(Stmt::Return {
+                value: Some(e),
+                span,
+            });
+        }
+    }
     let span = target
         .map(|n| span_of(n, source))
         .unwrap_or_else(Span::synthetic);
@@ -308,7 +317,12 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
         "call" | "command" | "command_call" | "method_call" => {
             let method_field = node.child_by_field_name("method");
             let name_txt = if let Some(m) = method_field {
-                text_of(m, text).to_string()
+                let n = text_of(m, text);
+                if n == "puts" {
+                    "print".to_string()
+                } else {
+                    n.to_string()
+                }
             } else {
                 text_of(node.named_child(0).unwrap(), text).to_string()
             };
