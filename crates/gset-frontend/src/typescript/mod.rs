@@ -100,7 +100,9 @@ impl Frontend for TypeScript {
                     "interface_declaration"
                     | "type_alias_declaration"
                     | "enum_declaration"
-                    | "import_statement" => {}
+                    | "import_statement"
+                    | "class_declaration"
+                    | "abstract_class_declaration" => {}
                     "export_statement" => {
                         let mut ci = 0;
                         while ci < child.child_count() {
