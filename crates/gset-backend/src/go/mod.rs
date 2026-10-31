@@ -316,7 +316,7 @@ impl<'a> Emitter<'a> {
                             .as_ref()
                             .filter(|ty| !matches!(ty, gset_ir::Type::Void))
                             .map(go_type)
-                            .unwrap_or_default();
+                            .unwrap_or_else(|| "interface{}".to_string());
                         let signature = if ret.is_empty() {
                             format!("{}({})", method.name, params)
                         } else {
@@ -1671,6 +1671,17 @@ impl<'a> Emitter<'a> {
         span: Span,
         ty: &Type,
     ) -> String {
+        if let ExprKind::Path(path) = &callee.kind
+            && path.segments.len() == 1
+            && path.segments[0]
+                .to_string()
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_uppercase())
+            && args.is_empty()
+        {
+            return format!("{}{{}}", path.segments[0]);
+        }
         let bound = if named_args.is_empty() {
             args.iter().collect::<Vec<_>>()
         } else {
