@@ -738,7 +738,7 @@ fn statement_has_yield(stmt: &gset_ir::Stmt) -> bool {
             ..
         } => {
             function_has_yield(then_branch)
-                || else_branch.as_ref().map_or(false, |e| match e.as_ref() {
+                || else_branch.as_ref().is_some_and(|e| match e.as_ref() {
                     gset_ir::Else::Block(b) => function_has_yield(b),
                     gset_ir::Else::If(s) => statement_has_yield(s),
                 })
