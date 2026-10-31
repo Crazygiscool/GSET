@@ -298,14 +298,13 @@ impl<'a> Emitter<'a> {
                     let methods = class.methods.iter().chain(class.constructors.iter());
                     if let Some(init) = methods.clone().find(|m| m.name.to_string() == "__init__") {
                         for stmt in &init.body.statements {
-                            if let Stmt::Assign { target, value, .. } = stmt {
-                                if let PatternKind::Location(expr) = &target.kind {
-                                    if let ExprKind::Field {
+                            if let Stmt::Assign { target, value, .. } = stmt
+                                && let PatternKind::Location(expr) = &target.kind
+                                    && let ExprKind::Field {
                                         target: target_expr,
                                         field,
                                     } = &expr.kind
-                                    {
-                                        if let ExprKind::Path(path) = &target_expr.kind
+                                        && let ExprKind::Path(path) = &target_expr.kind
                                             && path.segments.first().map(|s| s.as_ref())
                                                 == Some("self")
                                         {
@@ -315,9 +314,6 @@ impl<'a> Emitter<'a> {
                                             }
                                             let _ = value;
                                         }
-                                    }
-                                }
-                            }
                         }
                     }
                     // Preserve explicitly declared record fields as well.
