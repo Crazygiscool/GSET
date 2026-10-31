@@ -67,6 +67,11 @@ impl<'a> Emitter<'a> {
             if let Item::Function(f) = item {
                 self.known_functions.insert(java_ident(&f.name));
             }
+            if let Item::Class(c) = item {
+                for m in &c.methods {
+                    self.known_functions.insert(java_ident(&m.name));
+                }
+            }
         }
         self.out.writeln("final class Program {");
         self.out.indent();
@@ -90,10 +95,8 @@ impl<'a> Emitter<'a> {
                 Item::Global(_) => {}
                 Item::Function(_) => {}
                 Item::Class(c) => {
-                    if let Some(m) = c.methods.iter().find(|m| m.name.to_string() == "main") {
-                        for st in &m.body.statements {
-                            self.emit_stmt(st);
-                        }
+                    if let Some(_) = c.methods.iter().find(|m| m.name.to_string() == "main") {
+                        self.out.writeln(&format!("{}.main(args);", c.name));
                     }
                 }
                 Item::Stmt(s) => self.emit_stmt(s),
@@ -170,7 +173,7 @@ impl<'a> Emitter<'a> {
                 .collect::<Vec<_>>()
                 .join(", ");
             self.out
-                .writeln(&format!("public Object {}({})  {{", name, params));
+                .writeln(&format!("public static Object {}({})  {{", name, params));
             self.out.indent();
             self.locals.clear();
             for n in m.params.iter().filter_map(pattern_name) {
