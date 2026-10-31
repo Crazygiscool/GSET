@@ -371,6 +371,22 @@ impl<'a> Emitter<'a> {
                 }
                 self.out.writeln("}");
             }
+            Stmt::Throw { value, span } => match value {
+                Some(value) => {
+                    if let ExprKind::Call { callee, args, .. } = &value.kind
+                        && let ExprKind::Path(path) = &callee.kind
+                        && path.is_bare()
+                        && path.segments[0].to_string() == "Exception"
+                    {
+                        self.out.writeln("throw new Error();");
+                        let _ = args;
+                        return;
+                    }
+                    let v = self.emit_expr(value);
+                    self.out.writeln(&format!("throw {};", v));
+                }
+                None => unsupported(self.diagnostics, *span, "a bare re-throw"),
+            },
             Stmt::With {
                 value,
                 binding,
