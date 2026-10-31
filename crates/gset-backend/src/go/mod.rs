@@ -55,7 +55,7 @@ impl Backend for Go {
             // A Python module-level construct becomes a Go declaration plus a
             // `main` statement. Not native, but faithful.
             Records | Enums | Interfaces | TypeAliases => Support::Unsupported,
-            Comprehensions => Support::Unsupported,
+            Comprehensions => Support::Desugared,
             Generators => Support::Unsupported,
             Exceptions => Support::Unsupported,
             ContextManagers => Support::Unsupported,
@@ -66,14 +66,14 @@ impl Backend for Go {
             FStrings => Support::Desugared,
             Closures => Support::Native,
             PatternMatching => Support::Unsupported,
-            Slices => Support::Unsupported,
+            Slices => Support::Desugared,
             KeywordArguments => Support::Unsupported,
             MultipleAssignment => Support::Desugared,
             // `**` needs `math.Pow`, `//` needs a floor helper. A later slice
             // adds the helper pass rather than approximating with the wrong
             // operator.
             OperatorCall => Support::Unsupported,
-            LoopElse => Support::Unsupported,
+            LoopElse => Support::Desugared,
         }
     }
 
