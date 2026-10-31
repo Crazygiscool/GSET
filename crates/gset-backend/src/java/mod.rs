@@ -28,6 +28,7 @@ impl Backend for Java {
             Classes | Closures | MultipleAssignment | Exceptions | Slices | Imports => {
                 Support::Native
             }
+            FStrings => Support::Desugared,
             Async => Support::Desugared,
             Comprehensions => Support::Desugared,
             PatternMatching => Support::Desugared,
@@ -52,6 +53,7 @@ struct Emitter<'a> {
     diagnostics: &'a mut DiagnosticBag,
     known_functions: std::collections::HashSet<String>,
     locals: std::collections::HashSet<String>,
+    in_method: bool,
 }
 
 impl<'a> Emitter<'a> {
@@ -61,6 +63,7 @@ impl<'a> Emitter<'a> {
             diagnostics,
             known_functions: std::collections::HashSet::new(),
             locals: std::collections::HashSet::new(),
+            in_method: false,
         }
     }
 
@@ -72,6 +75,11 @@ impl<'a> Emitter<'a> {
             if let Item::Class(c) = item {
                 for m in &c.methods {
                     self.known_functions.insert(java_ident(&m.name));
+                }
+            }
+            if let Item::Global(g) = item {
+                if let Some(name) = pattern_name(&g.pattern) {
+                    self.known_functions.insert(name);
                 }
             }
         }
@@ -146,13 +154,18 @@ impl<'a> Emitter<'a> {
 
     fn emit_global(&mut self, g: &VarDecl) {
         let name = pattern_name(&g.pattern).unwrap_or("x".into());
+        let type_name = match g.ty {
+            Some(gset_ir::Type::Str) | Some(gset_ir::Type::StrLit) => "String",
+            Some(gset_ir::Type::Bool) => "boolean",
+            _ => "Object",
+        };
         if let Some(v) = &g.value {
             let v = self.emit_expr(v);
             self.out
-                .writeln(&format!("public static Object {} = {};", name, v));
+                .writeln(&format!("public static {} {} = {};", type_name, name, v));
         } else {
             self.out
-                .writeln(&format!("public static Object {} = null;", name));
+                .writeln(&format!("public static {} {} = null;", type_name, name));
         }
     }
 
@@ -195,18 +208,20 @@ impl<'a> Emitter<'a> {
         self.out.indent();
         for m in &c.methods {
             let name = &m.name;
-            let params = m
-                .params
+            let mut method_params = m.params.iter().filter_map(pattern_name).collect::<Vec<_>>();
+            if method_params.first().map(String::as_str) == Some("self") {
+                method_params.remove(0);
+            }
+            let params = method_params
                 .iter()
-                .filter_map(pattern_name)
                 .map(|n| format!("Object {}", n))
                 .collect::<Vec<_>>()
                 .join(", ");
             self.out
-                .writeln(&format!("public static Object {}({})  {{", name, params));
+                .writeln(&format!("public Object {}({})  {{", name, params));
             self.out.indent();
             self.locals.clear();
-            for n in m.params.iter().filter_map(pattern_name) {
+            for n in method_params {
                 self.locals.insert(n);
             }
             let mut __declared = std::collections::HashSet::new();
@@ -217,7 +232,9 @@ impl<'a> Emitter<'a> {
                     self.out.writeln(&format!("Object {} = null;", name));
                 }
             }
+            self.in_method = true;
             self.emit_block(&m.body);
+            self.in_method = false;
             if !has_return(&m.body) {
                 self.out.writeln("return null;");
             }
@@ -511,7 +528,10 @@ impl<'a> Emitter<'a> {
                     // Anything we have not declared as a local or defined as a
                     // function is not a symbol javac can resolve: emit a null
                     // placeholder rather than an invalid identifier.
-                    if self.locals.contains(&ident) || self.known_functions.contains(&ident) {
+                    if ident == "self" && self.in_method {
+                        "this".to_string()
+                    } else if self.locals.contains(&ident) || self.known_functions.contains(&ident)
+                    {
                         ident
                     } else {
                         "null".into()
@@ -603,14 +623,7 @@ impl<'a> Emitter<'a> {
                         .is_some_and(|c| c.is_uppercase())
                 {
                     let c = java_ident(path.segments[0].to_string());
-                    let a = {
-                        let mut out = Vec::new();
-                        for e in args {
-                            out.push(self.emit_expr(e));
-                        }
-                        out.join(", ")
-                    };
-                    return format!("new {}({})", c, a);
+                    return format!("new {}()", c);
                 }
                 let c = self.emit_expr(callee);
                 let mut out = Vec::new();
@@ -622,6 +635,38 @@ impl<'a> Emitter<'a> {
                     format!("gsetCall({})", c)
                 } else {
                     format!("gsetCall({}, {})", c, a)
+                }
+            }
+            ExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                let m = match method.as_ref() {
+                    "strip" => "trim",
+                    "lower" => "toLowerCase",
+                    "upper" => "toUpperCase",
+                    "replace" => "replace",
+                    "split" => "split",
+                    "startswith" => "startsWith",
+                    "endswith" => "endsWith",
+                    "find" => "indexOf",
+                    other => other,
+                };
+                let r = self.emit_expr(receiver);
+                let a = args
+                    .iter()
+                    .map(|e| self.emit_expr(e))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if m == "split" && a.is_empty() {
+                    return format!("{}.split(\"\\\\\\\\s+\")", r);
+                }
+                if a.is_empty() {
+                    format!("{}.{}()", r, m)
+                } else {
+                    format!("{}.{}({})", r, m, a)
                 }
             }
             ExprKind::Field { target, field } => {

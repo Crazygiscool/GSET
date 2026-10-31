@@ -358,9 +358,15 @@ impl<'a> Emitter<'a> {
                 args,
                 ..
             } => {
+                let target_method = match method.as_ref() {
+                    "lower" => "downcase",
+                    "upper" => "upcase",
+                    "replace" => "gsub",
+                    other => other,
+                };
                 let r = self.emit_expr(receiver);
                 let a = self.emit_arg_list(args);
-                format!("{}.{}({})", r, method, a)
+                format!("{}.{}({})", r, target_method, a)
             }
             ExprKind::Field { target, field } => {
                 format!("{}.{}", self.emit_expr(target), field)

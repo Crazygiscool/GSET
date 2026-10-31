@@ -1213,9 +1213,12 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 let mut ci = 0;
                 while ci < arguments.child_count() {
                     if let Some(c) = arguments.child(ci)
-                        && c.kind() != "(" && c.kind() != ")" && c.kind() != "," {
-                            args.push(lower_expr(c, source, text));
-                        }
+                        && c.kind() != "("
+                        && c.kind() != ")"
+                        && c.kind() != ","
+                    {
+                        args.push(lower_expr(c, source, text));
+                    }
                     ci += 1;
                 }
             }
@@ -1243,9 +1246,10 @@ fn lower_class(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<
     while ci < body.child_count() {
         if let Some(child) = body.child(ci)
             && child.kind() == "method_definition"
-                && let Some(m) = lower_method_definition(child, source, text) {
-                    methods.push(m);
-                }
+            && let Some(m) = lower_method_definition(child, source, text)
+        {
+            methods.push(m);
+        }
         ci += 1;
     }
     Some(Item::Class(Class {
@@ -1274,12 +1278,13 @@ fn lower_method_definition(
         let mut j = 0;
         while j < pn.child_count() {
             if let Some(c) = pn.child(j)
-                && c.kind() == "identifier" {
-                    params.push(Pattern::bind(
-                        Arc::from(text_of(c, text)),
-                        span_of(c, source),
-                    ));
-                }
+                && c.kind() == "identifier"
+            {
+                params.push(Pattern::bind(
+                    Arc::from(text_of(c, text)),
+                    span_of(c, source),
+                ));
+            }
             j += 1;
         }
     }
