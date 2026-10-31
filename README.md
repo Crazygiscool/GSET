@@ -18,7 +18,7 @@
 - **Homebrew**: `brew install crazygiscool/gset/gset`
 - **AUR**: `gset` (stable); `gset-git` is deprecated in favor of it
 - **Chocolatey**: `choco install gset`
-- **winget**: `winget install GSETLang.GSET`
+
 - **Windows (installer)**: download `gset-<version>-windows-amd64-setup.exe`
   (choose "Install for all users" or "Install just for me") or
   `gset-<version>-windows-amd64.msi` (all users) from the release assets below.
@@ -26,8 +26,8 @@
 ## Publishing
 
 GSET ships to four channels: GitHub Release, the Homebrew tap, AUR, and
-Chocolatey (winget via a version PR to `microsoft/winget-pkgs`).
-
+Chocolatey. winget is intentionally not published (no manifests are kept in
+this repository).
 1. **Cut the tag** — releases build from `v*` tags:
 
    ```bash
@@ -45,8 +45,7 @@ Chocolatey (winget via a version PR to `microsoft/winget-pkgs`).
 
    `.github/workflows/publish-packages.yml` then updates the
    [Homebrew tap](https://github.com/Crazygiscool/homebrew-gset), pushes the AUR
-   `gset` package (and deprecates `gset-git`), pushes the Chocolatey package, and
-   opens a winget version PR.
+   `gset` package (and deprecates `gset-git`), and pushes the Chocolatey package.
 
    Every package step is idempotent, so re-running after a partial failure is
-   safe; the winget step skips when a matching PR already exists.
+   safe.

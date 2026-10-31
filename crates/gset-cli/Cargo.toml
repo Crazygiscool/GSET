@@ -10,7 +10,7 @@ authors.workspace = true
 
 # The installed binary is named `gset`, not `gset-cli`. This is the one
 # compatibility surface the rewrite preserves: install.sh renames the extracted
-# archive member to `gset`, and every packaging manifest (winget, choco, AUR,
+# archive member to `gset`, and every packaging manifest (choco, AUR,
 # Debian) expects `gset` on PATH.
 [[bin]]
 name = "gset"

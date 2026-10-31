@@ -23,9 +23,9 @@ which this script uses).
 The script reads everything from defines, stamped per release:
 
 ```bat
-makensis -DVERSION=3.3.0 -DBINARY=C:\path\to\gset.exe -DLICENSE=C:\path\to\LICENSE ^
+makensis -DVERSION=3.4.0 -DBINARY=C:\path\to\gset.exe -DLICENSE=C:\path\to\LICENSE ^
          -DICON=C:\path\to\packages\windows\gset.ico ^
-         -DOUT=C:\out\gset-3.3.0-windows-amd64-setup.exe packages\windows\gset.nsi
+         -DOUT=C:\out\gset-3.4.0-windows-amd64-setup.exe packages\windows\gset.nsi
 ```
 
 Every define has a default, so `makensis packages\windows\gset.nsi` also works
@@ -43,11 +43,11 @@ EULA, and this project's `.wxs` is v4/v5 schema:
 dotnet tool install --global wix --version 5.0.2
 wix build packages\windows\gset.wxs ^
        -arch x64 ^
-       -d Version=3.3.0 ^
+       -d Version=3.4.0 ^
        -d Binary=C:\path\to\gset.exe ^
        -d License=C:\path\to\LICENSE ^
        -d Icon=C:\path\to\packages\windows\gset.ico ^
-       -o C:\out\gset-3.3.0-windows-amd64.msi
+       -o C:\out\gset-3.4.0-windows-amd64.msi
 ```
 
 The MSI is per-machine (needs elevation to install), embeds an
