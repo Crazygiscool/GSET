@@ -227,6 +227,7 @@ struct Emitter<'a> {
     /// The parameter list of every function the module declares.
     #[allow(dead_code)]
     functions: HashMap<gset_ir::Name, FnShape>,
+    class_fields: HashMap<String, Vec<String>>,
     /// Whether the expression being emitted is a statement of its own.
     ///
     /// Python's mutating methods return `None` but Go's equivalent returns the
@@ -255,6 +256,7 @@ impl<'a> Emitter<'a> {
             declared: HashSet::new(),
             dropped_imports: HashSet::new(),
             functions: HashMap::new(),
+            class_fields: HashMap::new(),
             expression_depth: 0,
             in_statement: false,
         }
@@ -292,20 +294,51 @@ impl<'a> Emitter<'a> {
                     unsupported(self.diagnostics, item.span(), describe_item(item));
                 }
                 Item::Class(class) => {
+                    let mut init_fields: Vec<String> = Vec::new();
+                    let methods = class.methods.iter().chain(class.constructors.iter());
+                    if let Some(init) = methods.clone().find(|m| m.name.to_string() == "__init__") {
+                        for stmt in &init.body.statements {
+                            if let Stmt::Assign { target, value, .. } = stmt {
+                                if let PatternKind::Location(expr) = &target.kind {
+                                    if let ExprKind::Field {
+                                        target: target_expr,
+                                        field,
+                                    } = &expr.kind
+                                    {
+                                        if let ExprKind::Path(path) = &target_expr.kind
+                                            && path.segments.first().map(|s| s.as_ref())
+                                                == Some("self")
+                                        {
+                                            let field_name = field.to_string();
+                                            if !init_fields.contains(&field_name) {
+                                                init_fields.push(field_name);
+                                            }
+                                            let _ = value;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Preserve explicitly declared record fields as well.
+                    for field in &class.fields {
+                        let name = pattern_name(&field.pattern);
+                        if !init_fields.contains(&name) {
+                            init_fields.push(name);
+                        }
+                    }
+                    self.class_fields
+                        .insert(class.name.to_string(), init_fields.clone());
                     self.out.blank();
                     self.out.writeln(&format!("type {} struct {{", class.name));
                     self.out.indent();
-                    for field in &class.fields {
-                        let ty = field.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN);
-                        self.out.writeln(&format!(
-                            "{} {}",
-                            pattern_name(&field.pattern),
-                            go_type(&ty)
-                        ));
+                    for field in &init_fields {
+                        self.out.writeln(&format!("{} interface{}", field, "{}"));
                     }
                     self.out.dedent();
                     self.out.writeln("}");
                     for method in &class.methods {
+                        self.declared.insert("self".to_string());
                         let mut params = method.params.iter().map(pattern_name).collect::<Vec<_>>();
                         if params.first().is_some_and(|p| *p == "self") {
                             params.remove(0);
@@ -1718,9 +1751,26 @@ impl<'a> Emitter<'a> {
                 .chars()
                 .next()
                 .is_some_and(|ch| ch.is_uppercase())
-            && args.is_empty()
         {
-            return format!("{}{{}}", path.segments[0]);
+            let class_name = path.segments[0].to_string();
+            if let Some(fields) = self.class_fields.get(&class_name).cloned() {
+                if args.is_empty() {
+                    return format!("{}{{}}", class_name);
+                }
+                if !fields.is_empty() && args.len() == fields.len() {
+                    let rendered = args
+                        .iter()
+                        .map(|arg| self.emit_expr(arg))
+                        .enumerate()
+                        .map(|(i, value)| format!("{}: {}", fields[i], value))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return format!("{}{{{}}}", class_name, rendered);
+                }
+            }
+            if args.is_empty() {
+                return format!("{}{{}}", class_name);
+            }
         }
         let bound = if named_args.is_empty() {
             args.iter().collect::<Vec<_>>()
