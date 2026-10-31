@@ -28,10 +28,10 @@ impl Backend for Python {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Imports | Classes | Records | Enums | Interfaces | TypeAliases | Comprehensions
-            | Generators | Exceptions | ContextManagers | Decorators | Async | FStrings
-            | Closures | PatternMatching | Slices | KeywordArguments | MultipleAssignment
-            | OperatorCall | LoopElse => Support::Native,
+            Imports | Classes | Comprehensions | Generators | Exceptions | ContextManagers
+            | Decorators | Async | FStrings | Closures | PatternMatching | Slices
+            | KeywordArguments | MultipleAssignment | OperatorCall | LoopElse => Support::Native,
+            _ => Support::Unsupported,
         }
     }
 
