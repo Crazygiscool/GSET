@@ -4,7 +4,7 @@ use crate::Frontend;
 use gset_ir::DiagnosticBag;
 use gset_ir::{
     BinaryOp, Block, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId, Literal,
-    Lowered, Module, Name, Path, Pattern, SourceId, SourceMap, Span, Stmt,
+    Lowered, Module, Name, Path, Pattern, SourceId, SourceMap, Span, Stmt, VarDecl,
 };
 use std::sync::Arc;
 
@@ -71,6 +71,17 @@ impl Frontend for Go {
                     "function_declaration" => {
                         if let Some(item) = lower_function(child, id, text) {
                             items.push(item);
+                        }
+                    }
+                    "method_declaration" => {
+                        if let Some(item) = lower_method(child, id, text) {
+                            items.push(item);
+                        }
+                    }
+                    "type_declaration" => {}
+                    "short_var_declaration" => {
+                        if let Some(stmt) = lower_short_var(child, id, text) {
+                            items.push(Item::Stmt(stmt));
                         }
                     }
                     "expression_statement" => {
@@ -179,6 +190,161 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
         exported: false,
         decorators: Vec::new(),
         generics: Vec::new(),
+        span,
+    }))
+}
+
+fn lower_method(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Item> {
+    let mut receiver_param = None;
+    let mut method_name = node.child_by_field_name("name"); // might be field identifier
+    let params_node = node.child_by_field_name("parameters");
+    let body_node = node.child_by_field_name("body");
+    if method_name.is_none() {
+        let mut ci = 0;
+        while ci < node.child_count() {
+            if let Some(c) = node.child(ci)
+                && c.kind() == "field_identifier"
+            {
+                method_name = Some(c);
+            }
+            ci += 1;
+        }
+    }
+    let method_name = {
+        let n = method_name?;
+        text_of(n, text)
+    };
+
+    // Receiver parameter.
+    if let Some(pn) = node.child_by_field_name("receiver") {
+        if let Some(c) = pn.child_by_field_name("name").or_else(|| {
+            let mut j = 0;
+            while j < pn.child_count() {
+                if let Some(cc) = pn.child(j)
+                    && cc.kind() == "identifier"
+                {
+                    return Some(cc);
+                }
+                j += 1;
+            }
+            None
+        }) {
+            receiver_param = Some(c);
+        } else if let Some(_first) = pn.child(0) {
+            let mut j = 0;
+            while j < pn.child_count() {
+                if let Some(cc) = pn.child(j)
+                    && cc.kind() == "identifier"
+                {
+                    receiver_param = Some(cc);
+                    break;
+                }
+                j += 1;
+            }
+        }
+    }
+
+    let name: Name = Arc::from(method_name);
+    let mut params = Vec::new();
+    if let Some(rpv) = receiver_param {
+        let pname = text_of(rpv, text);
+        params.push(Pattern::bind(Arc::from(pname), span_of(rpv, source)));
+    }
+    if let Some(pn) = params_node {
+        let mut ci = 0;
+        while ci < pn.child_count() {
+            if let Some(c) = pn.child(ci)
+                && c.kind() == "parameter_declaration"
+            {
+                let mut id = None;
+                let mut j = 0;
+                while j < c.child_count() {
+                    if let Some(cc) = c.child(j)
+                        && cc.kind() == "identifier"
+                    {
+                        id = Some(cc);
+                        break;
+                    }
+                    j += 1;
+                }
+                if let Some(nn) = id {
+                    let pname = text_of(nn, text);
+                    params.push(Pattern::bind(Arc::from(pname), span_of(nn, source)));
+                }
+            }
+            ci += 1;
+        }
+    }
+    let body = match body_node {
+        Some(b) => lower_block(b, source, text),
+        None => Block::empty(span_of(node, source)),
+    };
+    let span = span_of(node, source);
+    Some(Item::Function(Function {
+        name,
+        params: params.clone(),
+        param_types: vec![None; params.len()],
+        ret: None,
+        body,
+        variadic: false,
+        is_async: false,
+        exported: false,
+        decorators: Vec::new(),
+        generics: Vec::new(),
+        span,
+    }))
+}
+
+fn lower_short_var(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Stmt> {
+    let span = span_of(node, source);
+    let mut target = None;
+    let mut init = None;
+    let mut ci = 0;
+    while ci < node.child_count() {
+        if let Some(c) = node.child(ci) {
+            if c.kind() == "expression_list" {
+                if target.is_none() {
+                    // first expression_list is LHS names
+                    let mut j = 0;
+                    while j < c.child_count() {
+                        if let Some(cc) = c.child(j)
+                            && cc.kind() == "identifier"
+                        {
+                            target = Some(Pattern::bind(
+                                Arc::from(text_of(cc, text)),
+                                span_of(cc, source),
+                            ));
+                            break;
+                        }
+                        j += 1;
+                    }
+                } else {
+                    if let Some(cc) = c.child(0) {
+                        init = Some(lower_expr(cc, source, text));
+                    }
+                }
+            } else if target.is_none() && c.kind() == "identifier" {
+                target = Some(Pattern::bind(
+                    Arc::from(text_of(c, text)),
+                    span_of(c, source),
+                ));
+            } else if init.is_none()
+                && c.kind() != ":="
+                && c.is_named()
+                && c.kind() != "expression_list"
+            {
+                init = Some(lower_expr(c, source, text));
+            }
+        }
+        ci += 1;
+    }
+    let target = target.unwrap_or(Pattern::bind(Arc::from("_"), span));
+    Some(Stmt::Decl(VarDecl {
+        pattern: target,
+        ty: None,
+        value: init,
+        mutable: true,
+        exported: false,
         span,
     }))
 }
