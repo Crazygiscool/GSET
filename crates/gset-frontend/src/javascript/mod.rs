@@ -471,7 +471,8 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                         if !found_binding {
                             p = text_of(c, text).to_string();
                             found_binding = true;
-                        } else if true {
+                        } else if let ExprKind::Literal(Literal::Null) = it.kind {
+                            it = lower_expr(c, source, text);
                         }
                     } else if c.kind() == "statement_block" {
                         body = lower_block(c, source, text);
