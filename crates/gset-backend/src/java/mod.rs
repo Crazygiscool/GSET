@@ -30,6 +30,7 @@ impl Backend for Java {
             }
             Async => Support::Desugared,
             Comprehensions => Support::Desugared,
+            PatternMatching => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
@@ -414,6 +415,66 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("}");
             }
+            Stmt::Switch {
+                scrutinee,
+                cases,
+                default,
+                ..
+            } => {
+                let subject = scrutinee
+                    .as_ref()
+                    .map(|e| self.emit_expr(e))
+                    .unwrap_or_else(|| "null".to_string());
+                // Java pattern matching is lowered to an `if` chain here because
+                // the subject is dynamic, and a naive `case` expression is not
+                // legal for arbitrary values or generated helper calls.
+                let mut first = true;
+                let mut default_block = default.clone();
+                for case in cases {
+                    let (pattern, is_wildcard) = match &case.pattern.kind {
+                        gset_ir::PatternKind::Ignore => ("true".to_string(), true),
+                        gset_ir::PatternKind::Location(expr) => (
+                            format!("gsetEq({}, {})", subject, self.emit_expr(expr)),
+                            false,
+                        ),
+                        _ => ("true".to_string(), true),
+                    };
+                    if is_wildcard {
+                        if default_block.is_none() {
+                            default_block = Some(case.body.clone());
+                        }
+                        continue;
+                    }
+                    let guard = case
+                        .guard
+                        .as_ref()
+                        .map(|g| format!(" && {}", self.emit_truthy(g)))
+                        .unwrap_or_default();
+                    let keyword = if first { "if" } else { "else if" };
+                    let condition = format!("{}{}", pattern, guard);
+                    self.out.writeln(&format!("{} ({}) {{", keyword, condition));
+                    self.out.indent();
+                    self.emit_block(&case.body);
+                    self.out.dedent();
+                    self.out.writeln("}");
+                    first = false;
+                }
+                if let Some(default) = &default_block {
+                    if first {
+                        self.out.writeln("{");
+                        self.out.indent();
+                        self.emit_block(default);
+                        self.out.dedent();
+                        self.out.writeln("}");
+                    } else {
+                        self.out.writeln("else {");
+                        self.out.indent();
+                        self.emit_block(default);
+                        self.out.dedent();
+                        self.out.writeln("}");
+                    }
+                }
+            }
             _ => unsupported(self.diagnostics, stmt.span(), "a statement"),
         }
     }
@@ -783,6 +844,11 @@ fn has_return(block: &Block) -> bool {
         },
         Some(Stmt::Block(b)) => has_return(b),
         Some(Stmt::With { body, .. }) => has_return(body),
+        Some(Stmt::Switch { cases, default, .. }) => {
+            !cases.is_empty()
+                && cases.iter().all(|case| has_return(&case.body))
+                && default.as_ref().is_some_and(has_return)
+        }
         Some(Stmt::Try {
             body,
             handlers,
