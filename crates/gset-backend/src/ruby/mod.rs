@@ -25,9 +25,8 @@ impl Backend for Ruby {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Classes | FStrings | Closures | MultipleAssignment | Exceptions | Comprehensions => {
-                Support::Native
-            }
+            Classes | FStrings | Closures | MultipleAssignment | Exceptions | Comprehensions
+            | Slices => Support::Native,
             Async => Support::Desugared,
             _ => Support::Unsupported,
         }
