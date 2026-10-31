@@ -46,6 +46,10 @@ impl LangId {
     pub const TYPESCRIPT: LangId = LangId(2);
     /// Go, when the Go tree is retired in M6.
     pub const GO: LangId = LangId(3);
+    /// Java.
+    pub const JAVA: LangId = LangId(4);
+    /// Ruby.
+    pub const RUBY: LangId = LangId(5);
 
     /// Wraps a raw identifier.
     pub const fn from_raw(raw: u16) -> LangId {

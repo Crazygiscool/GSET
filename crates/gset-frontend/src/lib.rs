@@ -34,8 +34,12 @@ pub mod python;
 
 #[cfg(feature = "go")]
 pub mod go;
+#[cfg(feature = "java")]
+pub mod java;
 #[cfg(feature = "javascript")]
 pub mod javascript;
+#[cfg(feature = "ruby")]
+pub mod ruby;
 #[cfg(feature = "typescript")]
 pub mod typescript;
 
@@ -70,7 +74,9 @@ pub trait Frontend {
     feature = "python",
     feature = "javascript",
     feature = "typescript",
-    feature = "go"
+    feature = "go",
+    feature = "java",
+    feature = "ruby"
 ))]
 pub fn frontends() -> Vec<Box<dyn Frontend>> {
     #[cfg(feature = "python")]
@@ -87,6 +93,14 @@ pub fn frontends() -> Vec<Box<dyn Frontend>> {
     let go = Some(Box::new(go::Go) as Box<dyn Frontend>);
     #[cfg(not(feature = "go"))]
     let go: Option<Box<dyn Frontend>> = None;
+    #[cfg(feature = "java")]
+    let java = Some(Box::new(java::Java) as Box<dyn Frontend>);
+    #[cfg(not(feature = "java"))]
+    let java: Option<Box<dyn Frontend>> = None;
+    #[cfg(feature = "ruby")]
+    let ruby = Some(Box::new(ruby::Ruby) as Box<dyn Frontend>);
+    #[cfg(not(feature = "ruby"))]
+    let ruby: Option<Box<dyn Frontend>> = None;
     #[cfg(not(feature = "typescript"))]
     let ts: Option<Box<dyn Frontend>> = None;
     let mut result = Vec::new();
@@ -100,6 +114,12 @@ pub fn frontends() -> Vec<Box<dyn Frontend>> {
         result.push(frontend);
     }
     if let Some(frontend) = go {
+        result.push(frontend);
+    }
+    if let Some(frontend) = java {
+        result.push(frontend);
+    }
+    if let Some(frontend) = ruby {
         result.push(frontend);
     }
     result
