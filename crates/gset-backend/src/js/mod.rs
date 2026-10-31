@@ -223,6 +223,23 @@ impl<'a> Emitter<'a> {
     fn emit_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Empty { .. } => {}
+            Stmt::Break { label, .. } => {
+                if label.is_some() {
+                    unsupported(self.diagnostics, stmt.span(), "a labelled break");
+                    return;
+                }
+                if let Some(flag) = self.loop_else_flags.last().cloned() {
+                    self.out.writeln(&format!("{} = false;", flag));
+                }
+                self.out.writeln("break;");
+            }
+            Stmt::Continue { label, .. } => {
+                if label.is_some() {
+                    unsupported(self.diagnostics, stmt.span(), "a labelled continue");
+                    return;
+                }
+                self.out.writeln("continue;");
+            }
             Stmt::Expr(e) => {
                 let e = self.emit_expr(e);
                 self.out.writeln(&format!("{};", e));
@@ -491,7 +508,8 @@ impl<'a> Emitter<'a> {
 
     fn collect_function(&mut self, f: &Function) {
         let params = f.params.iter().filter_map(pattern_name).collect::<Vec<_>>();
-        self.known_functions.insert(f.name.to_string(), (params, f.variadic));
+        self.known_functions
+            .insert(f.name.to_string(), (params, f.variadic));
     }
 
     fn emit_arg_list(&mut self, args: &[Expr]) -> String {
