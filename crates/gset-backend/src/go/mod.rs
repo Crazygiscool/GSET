@@ -67,7 +67,7 @@ impl Backend for Go {
             Closures => Support::Native,
             PatternMatching => Support::Native,
             Slices => Support::Desugared,
-            KeywordArguments => Support::Unsupported,
+            KeywordArguments => Support::Desugared,
             MultipleAssignment => Support::Desugared,
             // `**` needs `math.Pow`, `//` needs a floor helper. A later slice
             // adds the helper pass rather than approximating with the wrong
