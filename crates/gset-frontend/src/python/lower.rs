@@ -1450,7 +1450,8 @@ impl<'a> Lowerer<'a> {
 /// Whether a `case` pattern is the catch-all `_`.
 fn is_wildcard_pattern(node: tree_sitter::Node<'_>) -> bool {
     if node.kind() == "case_pattern"
-        && let Some(inner) = node.named_child(0) {
+        && let Some(inner) = node.named_child(0)
+    {
         return is_wildcard_pattern(inner);
     }
     node.kind() == "wildcard_pattern" || node.kind() == "_" || node.kind() == "case_pattern"

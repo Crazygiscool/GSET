@@ -51,7 +51,8 @@ impl Backend for Go {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Imports | Classes => Support::Desugared,
+            Imports => Support::Desugared,
+            Classes => Support::Unsupported,
             // A Python module-level construct becomes a Go declaration plus a
             // `main` statement. Not native, but faithful.
             Records | Enums | Interfaces | TypeAliases => Support::Unsupported,
@@ -287,8 +288,48 @@ impl<'a> Emitter<'a> {
                     self.out.writeln("}");
                     self.out.blank();
                 }
-                Item::Class(_) | Item::Enum(_) | Item::Interface(_) | Item::TypeAlias(_) => {
+                Item::Enum(_) | Item::Interface(_) | Item::TypeAlias(_) => {
                     unsupported(self.diagnostics, item.span(), describe_item(item));
+                }
+                Item::Class(class) => {
+                    self.out.blank();
+                    self.out.writeln(&format!("type {} struct {{", class.name));
+                    self.out.indent();
+                    for field in &class.fields {
+                        let ty = field.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN);
+                        self.out.writeln(&format!(
+                            "{} {}",
+                            pattern_name(&field.pattern),
+                            go_type(&ty)
+                        ));
+                    }
+                    self.out.dedent();
+                    self.out.writeln("}");
+                    for method in &class.methods {
+                        let mut params = method.params.iter().map(pattern_name).collect::<Vec<_>>();
+                        if params.first().is_some_and(|p| *p == "self") {
+                            params.remove(0);
+                        }
+                        let params = params.join(", ");
+                        let ret = method
+                            .ret
+                            .as_ref()
+                            .filter(|ty| !matches!(ty, gset_ir::Type::Void))
+                            .map(go_type)
+                            .unwrap_or_default();
+                        let signature = if ret.is_empty() {
+                            format!("{}({})", method.name, params)
+                        } else {
+                            format!("{}({}) {}", method.name, params, ret)
+                        };
+                        self.out.blank();
+                        self.out
+                            .writeln(&format!("func (self {}) {} {{", class.name, signature));
+                        self.out.indent();
+                        self.emit_block_body(&method.body);
+                        self.out.dedent();
+                        self.out.writeln("}");
+                    }
                 }
                 Item::Stmt(statement) => self.main_statements.push(statement.clone()),
             }
