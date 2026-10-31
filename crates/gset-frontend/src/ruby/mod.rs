@@ -60,7 +60,12 @@ impl Frontend for Ruby {
                             items.push(item);
                         }
                     }
-                    "class" | "module" => diagnostics.push(Diagnostic::warning(
+                    "class" => {
+                        if let Some(item) = lower_class(child, id, text) {
+                            items.push(item);
+                        }
+                    }
+                    "module" => diagnostics.push(Diagnostic::warning(
                         span_of(child, id),
                         format!("unsupported top-level construct: {}", child.kind()),
                     )),
@@ -90,7 +95,42 @@ impl Frontend for Ruby {
     }
 }
 
-fn lower_method(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Item> {
+fn lower_class(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Item> {
+    let name = node.child_by_field_name("name")?;
+    let body = node.child_by_field_name("body");
+    let mut methods = Vec::new();
+    if let Some(b) = body {
+        let mut ci = 0;
+        while ci < b.child_count() {
+            if let Some(child) = b.child(ci) {
+                if (child.kind() == "method" || child.kind() == "singleton_method")
+                    && let Some(function) = lower_function_from_method(child, source, text)
+                {
+                    methods.push(function);
+                }
+            }
+            ci += 1;
+        }
+    }
+    Some(Item::Class(gset_ir::Class {
+        name: gset_ir::Name::from(text_of(name, text).to_string()),
+        decorators: Vec::new(),
+        extends: None,
+        implements: Vec::new(),
+        fields: Vec::new(),
+        methods,
+        constructors: Vec::new(),
+        exported: false,
+        generics: Vec::new(),
+        span: span_of(node, source),
+    }))
+}
+
+fn lower_function_from_method(
+    node: tree_sitter::Node,
+    source: SourceId,
+    text: &str,
+) -> Option<Function> {
     let name = node.child_by_field_name("name")?;
     let params_node = node.child_by_field_name("parameters");
     let mut params = Vec::new();
@@ -110,7 +150,7 @@ fn lower_method(node: tree_sitter::Node, source: SourceId, text: &str) -> Option
     }
     let body_node = node.child_by_field_name("body");
     let body = lower_body(body_node, source, text);
-    Some(Item::Function(Function {
+    Some(Function {
         name: Name::from(text_of(name, text).to_string()),
         params,
         param_types: Vec::new(),
@@ -122,7 +162,7 @@ fn lower_method(node: tree_sitter::Node, source: SourceId, text: &str) -> Option
         decorators: Vec::new(),
         generics: Vec::new(),
         span: span_of(node, source),
-    }))
+    })
 }
 
 fn lower_body(node: Option<tree_sitter::Node>, source: SourceId, text: &str) -> Block {
@@ -383,4 +423,12 @@ fn span_of(node: tree_sitter::Node, source: SourceId) -> Span {
 }
 fn text_of<'a>(node: tree_sitter::Node, text: &'a str) -> &'a str {
     &text[node.start_byte()..node.end_byte()]
+}
+
+fn lower_method(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Item> {
+    if let Some(function) = lower_function_from_method(node, source, text) {
+        Some(Item::Function(function))
+    } else {
+        None
+    }
 }
