@@ -315,6 +315,14 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("end");
             }
+            Stmt::LocalItem(item) => {
+                if let Item::Function(f) = item.as_ref() {
+                    self.emit_function(f);
+                    self.out.newline();
+                } else {
+                    unsupported(self.diagnostics, stmt.span(), "a nested item");
+                }
+            }
             _ => unsupported(self.diagnostics, stmt.span(), "a statement"),
         }
     }
