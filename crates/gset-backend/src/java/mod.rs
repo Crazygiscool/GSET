@@ -229,35 +229,28 @@ impl<'a> Emitter<'a> {
         if let Some(init) = c
             .constructors
             .iter()
-            .find(|m| java_ident(&m.name.to_string()) == "__init__")
+            .find(|m| java_ident(m.name.to_string()) == "__init__")
         {
             for stmt in &init.body.statements {
-                if let Stmt::Assign { target, value, .. } = stmt {
-                    match &target.kind {
-                        PatternKind::Location(expr) => {
-                            if let ExprKind::Field {
-                                target: target_expr,
-                                field,
-                            } = &expr.kind
+                if let Stmt::Assign { target, value, .. } = stmt
+                    && let PatternKind::Location(expr) = &target.kind
+                        && let ExprKind::Field {
+                            target: target_expr,
+                            field,
+                        } = &expr.kind
+                            && let ExprKind::Path(path) = &target_expr.kind
+                                && !path.segments.is_empty()
+                                && path.segments[0].to_string() == "self"
                             {
-                                if let ExprKind::Path(path) = &target_expr.kind
-                                    && !path.segments.is_empty()
-                                    && path.segments[0].to_string() == "self"
+                                init_fields.push(field.to_string());
+                                if let ExprKind::Path(value_path) = &value.kind
+                                    && value_path.segments.len() == 1
+                                    && !init_params
+                                        .contains(&value_path.segments[0].to_string())
                                 {
-                                    init_fields.push(field.to_string());
-                                    if let ExprKind::Path(value_path) = &value.kind
-                                        && value_path.segments.len() == 1
-                                        && !init_params
-                                            .contains(&value_path.segments[0].to_string())
-                                    {
-                                        init_params.push(value_path.segments[0].to_string());
-                                    }
+                                    init_params.push(value_path.segments[0].to_string());
                                 }
                             }
-                        }
-                        _ => {}
-                    }
-                }
             }
         }
         for field in &init_fields {
@@ -278,7 +271,7 @@ impl<'a> Emitter<'a> {
             self.out.indent();
             for field in &init_fields {
                 let field = java_ident(field);
-                if init_params.iter().any(|p| *p == field) {
+                if init_params.contains(&field) {
                     self.out.writeln(&format!("this.{} = {};", field, field));
                 }
             }
