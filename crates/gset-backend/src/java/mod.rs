@@ -602,7 +602,7 @@ impl<'a> Emitter<'a> {
                         .next()
                         .is_some_and(|c| c.is_uppercase())
                 {
-                    let c = java_ident(&path.segments[0].to_string());
+                    let c = java_ident(path.segments[0].to_string());
                     let a = {
                         let mut out = Vec::new();
                         for e in args {
