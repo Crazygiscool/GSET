@@ -66,7 +66,7 @@ impl Backend for Go {
             // faithful for a value with no format spec.
             FStrings => Support::Desugared,
             Closures => Support::Native,
-            PatternMatching => Support::Unsupported,
+            PatternMatching => Support::Desugared,
             Slices => Support::Desugared,
             KeywordArguments => Support::Desugared,
             MultipleAssignment => Support::Desugared,
@@ -942,6 +942,54 @@ impl<'a> Emitter<'a> {
                 self.emit_block_body(body);
                 self.out.dedent();
                 self.out.writeln("}()");
+            }
+            Stmt::Switch {
+                scrutinee,
+                cases,
+                default,
+                span,
+            } => {
+                let subject = match scrutinee {
+                    Some(expr) => self.emit_expr(expr),
+                    None => {
+                        unsupported(self.diagnostics, *span, "a tag-style `match`");
+                        return;
+                    }
+                };
+                self.out.writeln(&format!("switch {} {{", subject));
+                self.out.indent();
+                let mut has_default = false;
+                for case in cases {
+                    let pattern_text = self.emit_pattern(&case.pattern);
+                    let is_wildcard = matches!(case.pattern.kind, PatternKind::Ignore);
+                    if is_wildcard {
+                        if default.is_none() {
+                            // The arm is folded into the explicit default below.
+                        }
+                        continue;
+                    }
+                    if matches!(case.pattern.kind, PatternKind::Bind) {
+                        unsupported(self.diagnostics, case.span, "a binding `match` pattern");
+                        continue;
+                    }
+                    if case.guard.is_some() {
+                        unsupported(self.diagnostics, case.span, "a guarded `match` arm");
+                        continue;
+                    }
+                    self.out.writeln(&format!("case {}:", pattern_text));
+                    self.out.indent();
+                    self.emit_block_body(&case.body);
+                    self.out.dedent();
+                }
+                if let Some(default) = default {
+                    self.out.writeln("default:");
+                    self.out.indent();
+                    self.emit_block_body(default);
+                    self.out.dedent();
+                    let _ = has_default;
+                }
+                self.out.dedent();
+                self.out.writeln("}");
             }
             Stmt::LocalItem(item) => self.emit_local_item(item),
             Stmt::Empty { .. } => {}
@@ -5348,6 +5396,28 @@ fn scan_returns(block: &Block, found: &mut bool) {
             | Stmt::DoWhile { body, .. }
             | Stmt::With { body, .. }
             | Stmt::Block(body) => scan_returns(body, found),
+            Stmt::Switch { cases, default, .. } => {
+                let mut all = !cases.is_empty();
+                for case in cases {
+                    let mut one = false;
+                    scan_returns(&case.body, &mut one);
+                    if !one {
+                        all = false;
+                    }
+                }
+                if let Some(default) = default {
+                    let mut one = false;
+                    scan_returns(default, &mut one);
+                    if !one {
+                        all = false;
+                    }
+                } else if !cases.is_empty() {
+                    all = false;
+                }
+                if all {
+                    *found = true;
+                }
+            }
             Stmt::Try {
                 body,
                 handlers,
@@ -5394,6 +5464,15 @@ fn always_returns(block: &Block) -> bool {
             ..
         } => always_returns(then_branch) && else_returns(else_branch),
         Stmt::Block(inner) => always_returns(inner),
+        Stmt::Switch {
+            cases,
+            default: Some(default),
+            ..
+        } => {
+            !cases.is_empty()
+                && cases.iter().all(|case| always_returns(&case.body))
+                && always_returns(default)
+        }
         _ => false,
     })
 }
