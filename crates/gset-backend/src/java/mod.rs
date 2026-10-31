@@ -76,7 +76,8 @@ impl<'a> Emitter<'a> {
                 Item::Global(g) => self.emit_global(g),
                 Item::Function(f) => self.emit_function(f),
                 Item::Class(c) => self.emit_class(c),
-                _ => unsupported(self.diagnostics, item.span(), "an item"),
+                Item::Stmt(_) => {}
+                _ => unsupported(self.diagnostics, item.span(), format!("{:?}", item)),
             }
         }
         // Entry point.
@@ -87,6 +88,8 @@ impl<'a> Emitter<'a> {
         for item in &module.items {
             match item {
                 Item::Global(_) => {}
+                Item::Function(_) => {}
+                Item::Class(_) => {}
                 Item::Stmt(s) => self.emit_stmt(s),
                 Item::Import(import) => {
                     unsupported(self.diagnostics, import.span, "imports");
@@ -666,11 +669,12 @@ impl<'a> Emitter<'a> {
             .writeln("public static Object gsetAdd(Object a, Object b) {");
         self.out.indent();
         self.out.writeln("if (a instanceof String || b instanceof String) return String.valueOf(a) + String.valueOf(b);");
+        self.out.writeln("if (a instanceof java.math.BigInteger && b instanceof java.math.BigInteger) return ((java.math.BigInteger) a).add((java.math.BigInteger) b);");
         self.out
             .writeln("return ((Number) a).doubleValue() + ((Number) b).doubleValue();");
         self.out.dedent();
         self.out.writeln("}");
-        self.out.writeln("public static Object gsetSub(Object a, Object b) { return ((Number) a).doubleValue() - ((Number) b).doubleValue(); }");
+        self.out.writeln("public static Object gsetSub(Object a, Object b) { if (a instanceof java.math.BigInteger && b instanceof java.math.BigInteger) return ((java.math.BigInteger) a).subtract((java.math.BigInteger) b); return ((Number) a).doubleValue() - ((Number) b).doubleValue(); }");
         self.out.writeln("public static Object gsetMul(Object a, Object b) { return ((Number) a).doubleValue() * ((Number) b).doubleValue(); }");
         self.out.writeln("public static Object gsetDiv(Object a, Object b) { return ((Number) a).doubleValue() / ((Number) b).doubleValue(); }");
         self.out.writeln("public static Object gsetPow(Object a, Object b) { return Math.pow(((Number) a).doubleValue(), ((Number) b).doubleValue()); }");
@@ -679,10 +683,10 @@ impl<'a> Emitter<'a> {
             "public static Object gsetNeg(Object a) { return -((Number) a).doubleValue(); }",
         );
         self.out.writeln("public static boolean gsetEq(Object a, Object b) { return a == b ? true : (a != null && a.equals(b)); }");
-        self.out.writeln("public static boolean gsetLt(Object a, Object b) { return a instanceof Comparable && ((Comparable<Object>) a).compareTo(b) < 0; }");
-        self.out.writeln("public static boolean gsetLe(Object a, Object b) { return a instanceof Comparable && ((Comparable<Object>) a).compareTo(b) <= 0; }");
-        self.out.writeln("public static boolean gsetGt(Object a, Object b) { return a instanceof Comparable && ((Comparable<Object>) a).compareTo(b) > 0; }");
-        self.out.writeln("public static boolean gsetGe(Object a, Object b) { return a instanceof Comparable && ((Comparable<Object>) a).compareTo(b) >= 0; }");
+        self.out.writeln("public static boolean gsetLt(Object a, Object b) { if (a instanceof Number && b instanceof Number) return ((Number) a).doubleValue() < ((Number) b).doubleValue(); return false; }");
+        self.out.writeln("public static boolean gsetLe(Object a, Object b) { if (a instanceof Number && b instanceof Number) return ((Number) a).doubleValue() <= ((Number) b).doubleValue(); return false; }");
+        self.out.writeln("public static boolean gsetGt(Object a, Object b) { if (a instanceof Number && b instanceof Number) return ((Number) a).doubleValue() > ((Number) b).doubleValue(); return false; }");
+        self.out.writeln("public static boolean gsetGe(Object a, Object b) { if (a instanceof Number && b instanceof Number) return ((Number) a).doubleValue() >= ((Number) b).doubleValue(); return false; }");
         self.out.writeln("public static boolean gsetTruthy(Object v) { if (v == null) return false; if (v instanceof Boolean) return (Boolean) v; if (v instanceof Number) return ((Number) v).doubleValue() != 0; return true; }");
         self.out
             .writeln("public static Object gsetAttr(Object t, String f) { return null; }");
