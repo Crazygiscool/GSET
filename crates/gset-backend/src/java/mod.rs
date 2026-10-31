@@ -76,7 +76,7 @@ impl<'a> Emitter<'a> {
                 Item::Global(g) => self.emit_global(g),
                 Item::Function(f) => self.emit_function(f),
                 Item::Class(c) => self.emit_class(c),
-                _ => {}
+                _ => unsupported(self.diagnostics, item.span(), "an item"),
             }
         }
         // Entry point.
@@ -91,7 +91,7 @@ impl<'a> Emitter<'a> {
                 Item::Import(import) => {
                     unsupported(self.diagnostics, import.span, "imports");
                 }
-                _ => {}
+                _ => unsupported(self.diagnostics, item.span(), "an item"),
             }
         }
         self.out.dedent();
@@ -373,7 +373,7 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("}");
             }
-            _ => {}
+            _ => unsupported(self.diagnostics, stmt.span(), "a statement"),
         }
     }
 
