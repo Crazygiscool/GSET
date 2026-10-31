@@ -28,6 +28,7 @@ impl Backend for JavaScript {
             Classes | FStrings | Closures | Async | MultipleAssignment | Exceptions
             | Comprehensions | Slices => Support::Native,
             Imports => Support::Desugared,
+            PatternMatching => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
@@ -261,6 +262,62 @@ impl<'a> Emitter<'a> {
                 self.out.writeln(&format!("for (const {} of {}) {{", p, it));
                 self.out.indent();
                 self.emit_block(body);
+                self.out.dedent();
+                self.out.writeln("}");
+            }
+            Stmt::Switch {
+                scrutinee,
+                cases,
+                default,
+                ..
+            } => {
+                let subject = scrutinee
+                    .as_ref()
+                    .map(|e| self.emit_expr(e))
+                    .unwrap_or_else(|| "undefined".to_string());
+                self.out.writeln(&format!("switch ({}) {{", subject));
+                self.out.indent();
+                let mut default_block = default.clone();
+                for case in cases {
+                    if case.pattern.kind == gset_ir::PatternKind::Ignore {
+                        if default_block.is_none() {
+                            default_block = Some(case.body.clone());
+                        }
+                        continue;
+                    }
+                    let pat = match &case.pattern.kind {
+                        gset_ir::PatternKind::Bind => {
+                            pattern_name(&case.pattern).unwrap_or("_".to_string())
+                        }
+                        gset_ir::PatternKind::Ignore => {
+                            if default_block.is_none() {
+                                default_block = Some(case.body.clone());
+                            }
+                            "default".to_string()
+                        }
+                        gset_ir::PatternKind::Location(expr) => self.emit_expr(expr),
+                        _ => "_".to_string(),
+                    };
+                    if pat == "default" {
+                        continue;
+                    }
+                    self.out.writeln(&format!("case {}:", pat));
+                    self.out.indent();
+                    if let Some(guard) = &case.guard {
+                        let g = self.emit_truthy(guard);
+                        self.out.writeln(&format!("if (!{}) break;", g));
+                    }
+                    self.emit_block(&case.body);
+                    self.out.dedent();
+                    self.out.writeln("break;");
+                }
+                if let Some(default) = &default_block {
+                    self.out.writeln("default:");
+                    self.out.indent();
+                    self.emit_block(default);
+                    self.out.dedent();
+                    self.out.writeln("break;");
+                }
                 self.out.dedent();
                 self.out.writeln("}");
             }
