@@ -407,6 +407,13 @@ impl<'a> Emitter<'a> {
                 self.out.dedent();
                 self.out.writeln("}");
             }
+            Stmt::LocalItem(item) => match item.as_ref() {
+                gset_ir::Item::Function(f) => {
+                    self.emit_function(f);
+                    self.out.newline();
+                }
+                _ => unsupported(self.diagnostics, stmt.span(), "a nested item"),
+            },
             _ => unsupported(self.diagnostics, stmt.span(), "a statement"),
         }
     }
