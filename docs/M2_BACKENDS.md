@@ -1,6 +1,6 @@
 # M2 Backend Plan
 
-Status: **approved, in progress**
+Status: **complete**
 Decision date: 2026-10-09
 
 The backend half of milestone 2 from `RUST_REWRITE_PLAN.md` §M2: add the
