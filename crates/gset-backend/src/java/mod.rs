@@ -234,23 +234,22 @@ impl<'a> Emitter<'a> {
             for stmt in &init.body.statements {
                 if let Stmt::Assign { target, value, .. } = stmt
                     && let PatternKind::Location(expr) = &target.kind
-                        && let ExprKind::Field {
-                            target: target_expr,
-                            field,
-                        } = &expr.kind
-                            && let ExprKind::Path(path) = &target_expr.kind
-                                && !path.segments.is_empty()
-                                && path.segments[0].to_string() == "self"
-                            {
-                                init_fields.push(field.to_string());
-                                if let ExprKind::Path(value_path) = &value.kind
-                                    && value_path.segments.len() == 1
-                                    && !init_params
-                                        .contains(&value_path.segments[0].to_string())
-                                {
-                                    init_params.push(value_path.segments[0].to_string());
-                                }
-                            }
+                    && let ExprKind::Field {
+                        target: target_expr,
+                        field,
+                    } = &expr.kind
+                    && let ExprKind::Path(path) = &target_expr.kind
+                    && !path.segments.is_empty()
+                    && path.segments[0].to_string() == "self"
+                {
+                    init_fields.push(field.to_string());
+                    if let ExprKind::Path(value_path) = &value.kind
+                        && value_path.segments.len() == 1
+                        && !init_params.contains(&value_path.segments[0].to_string())
+                    {
+                        init_params.push(value_path.segments[0].to_string());
+                    }
+                }
             }
         }
         for field in &init_fields {
