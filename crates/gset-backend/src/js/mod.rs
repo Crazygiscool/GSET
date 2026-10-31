@@ -483,6 +483,14 @@ impl<'a> Emitter<'a> {
                         .join(", ");
                     return format!("console.log({})", a);
                 }
+                if let ExprKind::Path(path) = &callee.kind
+                    && path.segments.len() == 1
+                    && path.segments[0].to_string() == "len"
+                    && args.len() == 1
+                {
+                    return format!("{}.length", self.emit_expr(&args[0]));
+                }
+
                 let c = self.emit_expr(callee);
                 let a = args
                     .iter()
