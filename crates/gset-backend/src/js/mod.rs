@@ -49,6 +49,7 @@ struct Emitter<'a> {
     out: &'a mut CodeWriter,
     diagnostics: &'a mut DiagnosticBag,
     known_classes: std::collections::HashSet<String>,
+    known_functions: std::collections::HashMap<String, (Vec<String>, bool)>,
     loop_else_flags: Vec<String>,
     loop_else_counter: usize,
 }
@@ -59,6 +60,7 @@ impl<'a> Emitter<'a> {
             out,
             diagnostics,
             known_classes: std::collections::HashSet::new(),
+            known_functions: std::collections::HashMap::new(),
             loop_else_flags: Vec::new(),
             loop_else_counter: 0,
         }
@@ -66,7 +68,13 @@ impl<'a> Emitter<'a> {
 
     fn emit_module(&mut self, module: &Module) {
         for item in &module.items {
+            if let Item::Function(f) = item {
+                self.collect_function(f);
+            }
             if let Item::Class(c) = item {
+                for m in &c.methods {
+                    self.collect_function(m);
+                }
                 self.known_classes.insert(c.name.to_string());
             }
         }
@@ -479,6 +487,11 @@ impl<'a> Emitter<'a> {
         } else {
             self.out.writeln(&format!("let {};", name));
         }
+    }
+
+    fn collect_function(&mut self, f: &Function) {
+        let params = f.params.iter().filter_map(pattern_name).collect::<Vec<_>>();
+        self.known_functions.insert(f.name.to_string(), (params, f.variadic));
     }
 
     fn emit_arg_list(&mut self, args: &[Expr]) -> String {
