@@ -111,12 +111,11 @@ impl<'a> Emitter<'a> {
 
     fn emit_method(&mut self, f: &Function) {
         let name = &f.name;
-        let params = f
-            .params
-            .iter()
-            .filter_map(pattern_name)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let mut params = f.params.iter().filter_map(pattern_name).collect::<Vec<_>>();
+        if matches!(params.first().map(String::as_str), Some("self")) {
+            params.remove(0);
+        }
+        let params = params.join(", ");
         self.out.writeln(&format!("{}({}) {{", name, params));
         self.out.indent();
         self.emit_block(&f.body);
@@ -292,7 +291,13 @@ impl<'a> Emitter<'a> {
                 } else {
                     path.segments
                         .iter()
-                        .map(|n| n.to_string())
+                        .map(|n| {
+                            if n.to_string() == "self" {
+                                "this".to_string()
+                            } else {
+                                n.to_string()
+                            }
+                        })
                         .collect::<Vec<_>>()
                         .join(".")
                 }
