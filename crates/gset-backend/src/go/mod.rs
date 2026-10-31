@@ -334,11 +334,21 @@ impl<'a> Emitter<'a> {
                     self.out.writeln("}");
                     for method in &class.methods {
                         self.declared.insert("self".to_string());
-                        let mut params = method.params.iter().map(pattern_name).collect::<Vec<_>>();
-                        if params.first().is_some_and(|p| *p == "self") {
-                            params.remove(0);
+                        let mut emitted_params = Vec::new();
+                        for (index, pattern) in method.params.iter().enumerate() {
+                            if index == 0 && pattern_name(pattern) == "self" {
+                                continue;
+                            }
+                            let name = pattern_name(pattern);
+                            let ty = method
+                                .param_types
+                                .get(index)
+                                .and_then(|ty| ty.as_ref())
+                                .map(go_type)
+                                .unwrap_or_else(|| "interface{}".to_string());
+                            emitted_params.push(format!("{name} {ty}"));
                         }
-                        let params = params.join(", ");
+                        let params = emitted_params.join(", ");
                         let ret = method
                             .ret
                             .as_ref()
@@ -1561,18 +1571,18 @@ impl<'a> Emitter<'a> {
     /// A bare `nil` is only valid where the type is an interface, a pointer or
     /// a collection. Where the source's own type is concrete the zero value
     /// stands in, so a reported construct does not also break the file.
-    fn unusable_value_of(&self, ty: Option<&Type>, rendered: String) -> String {
+    fn unusable_value_of(&self, ty: Option<&Type>, _rendered: String) -> String {
         if self.in_statement {
             // `_ = nil` does not compile either: untyped `nil` has no type to
             // assign. A discarded zero is as good as any placeholder, and the
             // value it stands for is being thrown away either way.
-            return format!("_ = 0 /* {rendered} */");
+            return "_ = 0".to_string();
         }
         let zero = ty
             .and_then(named_type)
             .map(|go_type_name| zero_value(&go_type_name))
             .unwrap_or("nil");
-        format!("{zero} /* {rendered} */")
+        zero.to_string()
     }
 
     fn emit_literal(&mut self, span: Span, literal: &Literal) -> String {
@@ -1729,8 +1739,14 @@ impl<'a> Emitter<'a> {
                 *inclusive,
             ),
             ExprKind::Field { target, field } => {
-                let target = self.emit_expr(target);
-                format!("{target}.{field}")
+                if self.go_type_of(target).is_none() {
+                    let helper = self.use_helper("gsetAttr");
+                    let target = self.emit_expr(target);
+                    format!("{helper}({target}, {:?})", field)
+                } else {
+                    let target = self.emit_expr(target);
+                    format!("{target}.{field}")
+                }
             }
             ExprKind::List { elements } | ExprKind::Tuple { elements } => {
                 self.emit_sequence_literal(elements)
@@ -3829,6 +3845,34 @@ fn helpers() -> &'static [Helper] {
                 "\titems = append(items, value.Index(index).Interface())",
                 "}",
                 "return items",
+            ],
+        },
+        Helper {
+            name: "gsetAttr",
+            signature: "func gsetAttr(collection interface{}, field string) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "if !value.IsValid() {",
+                "    return nil",
+                "}",
+                "if value.Kind() == reflect.Struct {",
+                "    field := value.FieldByName(field)",
+                "    if field.IsValid() {",
+                "        return field.Interface()",
+                "    }",
+                "}",
+                "if value.Kind() == reflect.Pointer && !value.IsNil() {",
+                "    value = value.Elem()",
+                "    if value.Kind() == reflect.Struct {",
+                "        field := value.FieldByName(field)",
+                "        if field.IsValid() {",
+                "            return field.Interface()",
+                "        }",
+                "    }",
+                "}",
+                "return nil",
             ],
         },
         Helper {
