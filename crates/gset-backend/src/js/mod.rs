@@ -47,14 +47,24 @@ impl Backend for JavaScript {
 struct Emitter<'a> {
     out: &'a mut CodeWriter,
     diagnostics: &'a mut DiagnosticBag,
+    known_classes: std::collections::HashSet<String>,
 }
 
 impl<'a> Emitter<'a> {
     fn new(out: &'a mut CodeWriter, diagnostics: &'a mut DiagnosticBag) -> Self {
-        Self { out, diagnostics }
+        Self {
+            out,
+            diagnostics,
+            known_classes: std::collections::HashSet::new(),
+        }
     }
 
     fn emit_module(&mut self, module: &Module) {
+        for item in &module.items {
+            if let Item::Class(c) = item {
+                self.known_classes.insert(c.name.to_string());
+            }
+        }
         for item in &module.items {
             match item {
                 Item::Global(g) => {
@@ -491,17 +501,36 @@ impl<'a> Emitter<'a> {
                     return format!("{}.length", self.emit_expr(&args[0]));
                 }
 
+                if let ExprKind::Path(path) = &callee.kind
+                    && path.segments.len() == 1
+                    && path.segments[0]
+                        .to_string()
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_uppercase())
+                {
+                    let cname = path.segments[0].to_string();
+
+                    if args.is_empty() {
+                        return format!("new {}()", cname);
+                    }
+
+                    let a = args
+                        .iter()
+                        .map(|e| self.emit_expr(e))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    return format!("new {}({})", cname, a);
+                }
+
                 let c = self.emit_expr(callee);
                 let a = args
                     .iter()
                     .map(|e| self.emit_expr(e))
                     .collect::<Vec<_>>()
                     .join(", ");
-                if c.chars().next().is_some_and(|ch| ch.is_uppercase()) {
-                    format!("new {}({})", c, a)
-                } else {
-                    format!("{}({})", c, a)
-                }
+                format!("{}({})", c, a)
             }
             ExprKind::Index { target, index } => {
                 format!("{}[{}]", self.emit_expr(target), self.emit_expr(index))

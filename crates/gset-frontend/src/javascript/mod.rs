@@ -1,9 +1,9 @@
 //! The JavaScript frontend.
 
 use gset_ir::{
-    BinaryOp, Block, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId, Literal,
-    LogicalOp, Lowered, Module, Name, NamedArg, Path as IrPath, Pattern, SourceId, SourceMap, Span,
-    Stmt, UnaryOp, VarDecl,
+    BinaryOp, Block, Class, ComparisonOp, Diagnostic, Expr, ExprKind, Function, Item, LangId,
+    Literal, LogicalOp, Lowered, Module, Name, NamedArg, Path as IrPath, Pattern, SourceId,
+    SourceMap, Span, Stmt, UnaryOp, VarDecl,
 };
 
 use crate::Frontend;
@@ -96,12 +96,13 @@ impl Frontend for JavaScript {
                         lower_lexical_declaration(child, id, text, &mut items);
                     }
                     "program" => {}
-                    "interface_declaration"
-                    | "type_alias_declaration"
-                    | "enum_declaration"
-                    | "import_statement"
-                    | "class_declaration"
-                    | "abstract_class_declaration" => {}
+                    "interface_declaration" | "type_alias_declaration" => {}
+                    "enum_declaration" | "import_statement" => {}
+                    "class_declaration" | "abstract_class_declaration" => {
+                        if let Some(item) = lower_class(child, id, text) {
+                            items.push(item);
+                        }
+                    }
                     "export_statement" => {
                         let mut ci = 0;
                         while ci < child.child_count() {
@@ -1205,6 +1206,100 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 span,
             )
         }
+        "new_expression" => {
+            let constructor = node.child_by_field_name("constructor").unwrap();
+            let mut args = Vec::new();
+            if let Some(arguments) = node.child_by_field_name("arguments") {
+                let mut ci = 0;
+                while ci < arguments.child_count() {
+                    if let Some(c) = arguments.child(ci) {
+                        if c.kind() != "(" && c.kind() != ")" && c.kind() != "," {
+                            args.push(lower_expr(c, source, text));
+                        }
+                    }
+                    ci += 1;
+                }
+            }
+            Expr::new(
+                ExprKind::Call {
+                    callee: Box::new(Expr::path(
+                        Arc::from(text_of(constructor, text).to_string()),
+                        span,
+                    )),
+                    args,
+                    named_args: Vec::new(),
+                },
+                span,
+            )
+        }
         _ => Expr::error(format!("unsupported JS expression: {}", node.kind()), span),
     }
+}
+
+fn lower_class(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Item> {
+    let name = node.child_by_field_name("name")?;
+    let body = node.child_by_field_name("body")?;
+    let mut methods = Vec::new();
+    let mut ci = 0;
+    while ci < body.child_count() {
+        if let Some(child) = body.child(ci) {
+            if child.kind() == "method_definition" {
+                if let Some(m) = lower_method_definition(child, source, text) {
+                    methods.push(m);
+                }
+            }
+        }
+        ci += 1;
+    }
+    Some(Item::Class(Class {
+        name: gset_ir::Name::from(text_of(name, text).to_string()),
+        decorators: Vec::new(),
+        extends: None,
+        implements: Vec::new(),
+        fields: Vec::new(),
+        methods,
+        constructors: Vec::new(),
+        exported: false,
+        generics: Vec::new(),
+        span: span_of(node, source),
+    }))
+}
+
+fn lower_method_definition(
+    node: tree_sitter::Node,
+    source: SourceId,
+    text: &str,
+) -> Option<Function> {
+    let name = node.child_by_field_name("name")?;
+    let params_node = node.child_by_field_name("parameters");
+    let mut params = Vec::new();
+    if let Some(pn) = params_node {
+        let mut j = 0;
+        while j < pn.child_count() {
+            if let Some(c) = pn.child(j) {
+                if c.kind() == "identifier" {
+                    params.push(Pattern::bind(
+                        Arc::from(text_of(c, text)),
+                        span_of(c, source),
+                    ));
+                }
+            }
+            j += 1;
+        }
+    }
+    let body_node = node.child_by_field_name("body")?;
+    let body = lower_block(body_node, source, text);
+    Some(Function {
+        name: gset_ir::Name::from(text_of(name, text).to_string()),
+        params,
+        param_types: Vec::new(),
+        ret: None,
+        body,
+        variadic: false,
+        is_async: false,
+        exported: false,
+        decorators: Vec::new(),
+        generics: Vec::new(),
+        span: span_of(node, source),
+    })
 }
