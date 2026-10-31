@@ -594,6 +594,24 @@ impl<'a> Emitter<'a> {
                     };
                     return format!("{}({})", c, a);
                 }
+                if let ExprKind::Path(path) = &callee.kind
+                    && path.segments.len() == 1
+                    && path.segments[0]
+                        .to_string()
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_uppercase())
+                {
+                    let c = java_ident(&path.segments[0].to_string());
+                    let a = {
+                        let mut out = Vec::new();
+                        for e in args {
+                            out.push(self.emit_expr(e));
+                        }
+                        out.join(", ")
+                    };
+                    return format!("new {}({})", c, a);
+                }
                 let c = self.emit_expr(callee);
                 let mut out = Vec::new();
                 for e in args {

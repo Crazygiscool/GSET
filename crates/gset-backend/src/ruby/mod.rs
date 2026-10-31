@@ -428,6 +428,16 @@ impl<'a> Emitter<'a> {
                     .map(|e| self.emit_expr(e))
                     .collect::<Vec<_>>()
                     .join(", ");
+                if let ExprKind::Path(path) = &callee.kind
+                    && path.segments.len() == 1
+                    && path.segments[0]
+                        .to_string()
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_uppercase())
+                {
+                    return format!("{}.new({})", c, a);
+                }
                 format!("{}({})", c, a)
             }
             ExprKind::Index { target, index } => {
