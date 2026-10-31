@@ -25,8 +25,10 @@ impl Backend for Ruby {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Classes | FStrings | Closures | Async | MultipleAssignment | Exceptions
-            | Comprehensions => Support::Native,
+            Classes | FStrings | Closures | MultipleAssignment | Exceptions | Comprehensions => {
+                Support::Native
+            }
+            Async => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
@@ -93,7 +95,6 @@ impl<'a> Emitter<'a> {
             params.remove(0);
         }
         let params = params.join(", ");
-        let _ = f.is_async;
         let kw = "def";
         self.out.writeln(&format!("{} {}({})", kw, name, params));
         self.out.indent();
@@ -458,6 +459,7 @@ impl<'a> Emitter<'a> {
                 out.push('"');
                 out
             }
+            ExprKind::Await { expr: inner } => self.emit_expr(inner),
             _ => "nil".into(),
         }
     }

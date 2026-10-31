@@ -25,9 +25,10 @@ impl Backend for Java {
     fn capability(&self, capability: Capability) -> Support {
         use Capability::*;
         match capability {
-            Classes | Closures | Async | MultipleAssignment | Exceptions | Comprehensions => {
+            Classes | Closures | MultipleAssignment | Exceptions | Comprehensions => {
                 Support::Native
             }
+            Async => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
