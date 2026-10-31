@@ -29,6 +29,7 @@ impl Backend for JavaScript {
             | Comprehensions | Slices | Generators => Support::Native,
             Imports => Support::Desugared,
             PatternMatching => Support::Desugared,
+            LoopElse => Support::Desugared,
             _ => Support::Unsupported,
         }
     }
@@ -48,6 +49,8 @@ struct Emitter<'a> {
     out: &'a mut CodeWriter,
     diagnostics: &'a mut DiagnosticBag,
     known_classes: std::collections::HashSet<String>,
+    loop_else_flags: Vec<String>,
+    loop_else_counter: usize,
 }
 
 impl<'a> Emitter<'a> {
@@ -56,6 +59,8 @@ impl<'a> Emitter<'a> {
             out,
             diagnostics,
             known_classes: std::collections::HashSet::new(),
+            loop_else_flags: Vec::new(),
+            loop_else_counter: 0,
         }
     }
 
@@ -222,6 +227,12 @@ impl<'a> Emitter<'a> {
                     self.out.writeln("return;");
                 }
             }
+            Stmt::Break { .. } => {
+                if let Some(flag) = self.loop_else_flags.last().cloned() {
+                    self.out.writeln(&format!("{} = false;", flag));
+                }
+                self.out.writeln("break;");
+            }
             Stmt::Assign { target, value, .. } => {
                 let t = pattern_name(target).unwrap_or("_".into());
                 let v = self.emit_expr(value);
@@ -255,28 +266,70 @@ impl<'a> Emitter<'a> {
                 }
             }
             Stmt::While {
-                condition, body, ..
+                condition,
+                body,
+                else_body,
+                ..
             } => {
                 let c = self.emit_truthy(condition);
+                let has_else = else_body.is_some();
+                let flag = if has_else {
+                    self.loop_else_counter += 1;
+                    format!("__gset_loop_else_{}", self.loop_else_counter)
+                } else {
+                    String::new()
+                };
+                if has_else {
+                    self.out.writeln(&format!("let {} = true;", flag));
+                    self.loop_else_flags.push(flag.clone());
+                }
                 self.out.writeln(&format!("while ({}) {{", c));
                 self.out.indent();
                 self.emit_block(body);
                 self.out.dedent();
                 self.out.writeln("}");
+                if has_else {
+                    self.loop_else_flags.pop();
+                    self.out.writeln(&format!("if ({}) {{", flag));
+                    self.out.indent();
+                    self.emit_block(else_body.as_ref().unwrap());
+                    self.out.dedent();
+                    self.out.writeln("}");
+                }
             }
             Stmt::ForIn {
                 pattern,
                 iterable,
                 body,
+                else_body,
                 ..
             } => {
                 let p = pattern_name(pattern).unwrap_or("_".into());
                 let it = self.emit_expr(iterable);
+                let has_else = else_body.is_some();
+                let flag = if has_else {
+                    self.loop_else_counter += 1;
+                    format!("__gset_loop_else_{}", self.loop_else_counter)
+                } else {
+                    String::new()
+                };
+                if has_else {
+                    self.out.writeln(&format!("let {} = true;", flag));
+                    self.loop_else_flags.push(flag.clone());
+                }
                 self.out.writeln(&format!("for (const {} of {}) {{", p, it));
                 self.out.indent();
                 self.emit_block(body);
                 self.out.dedent();
                 self.out.writeln("}");
+                if has_else {
+                    self.loop_else_flags.pop();
+                    self.out.writeln(&format!("if ({}) {{", flag));
+                    self.out.indent();
+                    self.emit_block(else_body.as_ref().unwrap());
+                    self.out.dedent();
+                    self.out.writeln("}");
+                }
             }
             Stmt::Switch {
                 scrutinee,
