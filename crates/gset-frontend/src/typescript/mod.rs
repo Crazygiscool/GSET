@@ -1134,6 +1134,49 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             }
             inner.unwrap_or(Expr::null(span))
         }
+        "template_string" => {
+            let mut segments = Vec::new();
+            let mut arguments = Vec::new();
+            let mut ci = 0;
+            while ci < node.child_count() {
+                if let Some(c) = node.child(ci) {
+                    if c.kind() == "string_fragment" {
+                        segments.push(text_of(c, text).to_string());
+                    } else if c.kind() == "template_substitution" {
+                        let mut j = 0;
+                        let mut inner = None;
+                        while j < c.child_count() {
+                            if let Some(ec) = c.child(j)
+                                && ec.kind() != "$" && ec.kind() != " && ec.kind() != " {
+                                    inner = Some(lower_expr(ec, source, text));
+                                }
+                            j += 1;
+                        }
+                        if let Some(e) = inner {
+                            arguments.push(e);
+                        }
+                        // ensure a following segment
+                        segments.push(String::new());
+                    }
+                }
+                ci += 1;
+            }
+            if segments.is_empty() {
+                segments.push(String::new());
+            }
+            if segments.len() <= arguments.len() {
+                segments.push(String::new());
+            }
+            let formats = vec![None; arguments.len()];
+            Expr::new(
+                ExprKind::Format {
+                    segments,
+                    arguments,
+                    formats,
+                },
+                span,
+            )
+        }
         _ => Expr::error(format!("unsupported TS expression: {}", node.kind()), span),
     }
 }
