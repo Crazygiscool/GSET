@@ -30,6 +30,11 @@ fn python_to_java() {
     run_python_vs_java();
 }
 
+#[test]
+fn python_to_python() {
+    run_python_vs_python();
+}
+
 fn python_out() -> std::process::Output {
     let path = std::env::temp_dir().join("gset-py-fib.py");
     std::fs::write(&path, SRC).unwrap();
@@ -124,6 +129,27 @@ fn run_python_vs_java() {
         .arg("Program")
         .output()
         .expect("java");
+    let _ = std::fs::remove_dir_all(&dir);
+    let want = python_out();
+    if !got.status.success() {
+        eprintln!("{}", String::from_utf8_lossy(&got.stderr));
+    }
+    assert_eq!(want.stdout, got.stdout);
+    assert_eq!(want.status.code(), got.status.code());
+}
+
+fn run_python_vs_python() {
+    let out = gset_cli::transpile("fib.py", SRC, Some("python"), "python").unwrap();
+    assert!(!out.failed, "{:?}", out.diagnostics);
+    let dir = std::env::temp_dir().join("gset-diff-pypy");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.py");
+    std::fs::write(&main, &out.text).unwrap();
+    let got = std::process::Command::new("python3")
+        .arg(&main)
+        .output()
+        .expect("python3");
     let _ = std::fs::remove_dir_all(&dir);
     let want = python_out();
     if !got.status.success() {
