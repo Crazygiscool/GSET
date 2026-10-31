@@ -62,6 +62,20 @@ pub trait Backend: Sync {
 pub fn emit(backend: &dyn Backend, module: &Module, source_map: &SourceMap) -> Emitted {
     let mut writer = CodeWriter::new(backend.indentation());
     let mut diagnostics = DiagnosticBag::new();
+    for capability in crate::capabilities::required(module) {
+        if matches!(backend.capability(capability), Support::Unsupported) {
+            diagnostics.push(
+                gset_ir::Diagnostic::error(
+                    module.span,
+                    format!(
+                        "this backend cannot express {}: it is reported rather than emitted",
+                        capability.name()
+                    ),
+                )
+                .with_code("gset-backend-unsupported"),
+            );
+        }
+    }
     backend.emit_module(module, source_map, &mut writer, &mut diagnostics);
     Emitted {
         text: writer.into_string(),
