@@ -32,6 +32,8 @@ pub mod limits;
 #[cfg(feature = "python")]
 pub mod python;
 
+#[cfg(feature = "go")]
+pub mod go;
 #[cfg(feature = "javascript")]
 pub mod javascript;
 #[cfg(feature = "typescript")]
@@ -64,7 +66,12 @@ pub trait Frontend {
 /// Every frontend compiled into this build.
 ///
 /// Assembled piecewise so adding a language needs no edit beyond a feature gate.
-#[cfg(any(feature = "python", feature = "javascript", feature = "typescript"))]
+#[cfg(any(
+    feature = "python",
+    feature = "javascript",
+    feature = "typescript",
+    feature = "go"
+))]
 pub fn frontends() -> Vec<Box<dyn Frontend>> {
     #[cfg(feature = "python")]
     let py = Some(Box::new(python::Python) as Box<dyn Frontend>);
@@ -76,6 +83,10 @@ pub fn frontends() -> Vec<Box<dyn Frontend>> {
     let js: Option<Box<dyn Frontend>> = None;
     #[cfg(feature = "typescript")]
     let ts = Some(Box::new(typescript::TypeScript) as Box<dyn Frontend>);
+    #[cfg(feature = "go")]
+    let go = Some(Box::new(go::Go) as Box<dyn Frontend>);
+    #[cfg(not(feature = "go"))]
+    let go: Option<Box<dyn Frontend>> = None;
     #[cfg(not(feature = "typescript"))]
     let ts: Option<Box<dyn Frontend>> = None;
     let mut result = Vec::new();
@@ -88,12 +99,20 @@ pub fn frontends() -> Vec<Box<dyn Frontend>> {
     if let Some(frontend) = ts {
         result.push(frontend);
     }
+    if let Some(frontend) = go {
+        result.push(frontend);
+    }
     result
 }
 
 /// Every frontend compiled into this build, which with no language feature
 /// enabled is none at all.
-#[cfg(not(any(feature = "python", feature = "javascript", feature = "typescript")))]
+#[cfg(not(any(
+    feature = "python",
+    feature = "javascript",
+    feature = "typescript",
+    feature = "go"
+)))]
 pub fn frontends() -> Vec<Box<dyn Frontend>> {
     Vec::new()
 }

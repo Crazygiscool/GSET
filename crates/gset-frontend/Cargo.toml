@@ -18,6 +18,7 @@ default = ["python", "javascript", "typescript"]
 python = ["dep:tree-sitter-python"]
 javascript = ["dep:tree-sitter-javascript"]
 typescript = ["dep:tree-sitter-typescript"]
+go = []
 
 [dependencies]
 gset-ir = { workspace = true }
