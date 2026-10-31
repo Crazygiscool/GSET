@@ -65,7 +65,7 @@ impl Backend for Go {
             // faithful for a value with no format spec.
             FStrings => Support::Desugared,
             Closures => Support::Native,
-            PatternMatching => Support::Unsupported,
+            PatternMatching => Support::Native,
             Slices => Support::Desugared,
             KeywordArguments => Support::Unsupported,
             MultipleAssignment => Support::Desugared,
