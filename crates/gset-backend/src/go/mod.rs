@@ -5531,10 +5531,6 @@ fn describe_expr(kind: &ExprKind) -> &'static str {
     }
 }
 
-fn describe_method(method: &str) -> String {
-    format!("the `.{method}` method")
-}
-
 #[cfg(test)]
 mod format_spec_tests {
     use super::{split_conversion, translate_format_spec};
