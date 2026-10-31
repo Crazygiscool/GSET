@@ -1,7 +1,7 @@
 backend    arguments
 backend    async_flow
 backend    classes
-ok         comprehensions
+backend    comprehensions
 backend    context_managers
 ok         declaration_after_if
 backend    declarations
@@ -22,4 +22,4 @@ ok         operators
 ok         returns
 backend    typed
 
-10 ok / 0 frontend / 13 backend / 0 malformed / 0 invalid
+9 ok / 0 frontend / 14 backend / 0 malformed / 0 invalid
