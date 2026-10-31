@@ -351,7 +351,12 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 }
                 ci += 1;
             }
-            let callee = if let Some(obj) = object {
+            let special_print = object.as_ref().map(|o| text_of(*o, text) == "System.out")
+                == Some(true)
+                && name_txt == "print";
+            let callee = if special_print {
+                Expr::path(Arc::from(name_txt.clone()), span)
+            } else if let Some(obj) = object {
                 Expr::new(
                     ExprKind::Field {
                         target: Box::new(lower_expr(obj, source, text)),

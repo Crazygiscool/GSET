@@ -89,7 +89,13 @@ impl<'a> Emitter<'a> {
             match item {
                 Item::Global(_) => {}
                 Item::Function(_) => {}
-                Item::Class(_) => {}
+                Item::Class(c) => {
+                    if let Some(m) = c.methods.iter().find(|m| m.name.to_string() == "main") {
+                        for st in &m.body.statements {
+                            self.emit_stmt(st);
+                        }
+                    }
+                }
                 Item::Stmt(s) => self.emit_stmt(s),
                 Item::Import(import) => {
                     unsupported(self.diagnostics, import.span, "imports");
