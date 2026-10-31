@@ -2,8 +2,6 @@
 //! (Go uses `gofmt`.) Here we at least verify that a fib program parses, lowers,
 //! and emits Go that passes `gofmt` and `go vet`.
 
-
-
 use gset_cli::transpile;
 use std::process::Command;
 
@@ -16,8 +14,7 @@ function fib(n) {
 }
 console.log(fib(10));
 "#;
-    let out = transpile("fib.js", text, Some("javascript"), "go")
-        .expect("js→go transpile");
+    let out = transpile("fib.js", text, Some("javascript"), "go").expect("js→go transpile");
     assert!(!out.failed);
     // Go syntax check.
     let dir = std::env::temp_dir().join("gset-jsfe");
