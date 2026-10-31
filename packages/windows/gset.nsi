@@ -11,8 +11,8 @@
 ;
 ; The script reads its inputs from defines so CI can stamp it per release:
 ;
-;   makensis /DVERSION=3.3.0 /DBINARY=...\gset.exe /DLICENSE=...\LICENSE \
-;            /DICON=...\gset.ico /DOUT=...\gset-3.3.0-setup.exe gset.nsi
+;   makensis /DVERSION=3.4.0 /DBINARY=...\gset.exe /DLICENSE=...\LICENSE \
+;            /DICON=...\gset.ico /DOUT=...\gset-3.4.0-setup.exe gset.nsi
 ;
 ; Every define has a sensible default so the script also compiles unmodified
 ; when the files sit next to it.
@@ -31,7 +31,7 @@ ${UnStrRep}
 !define /IfNDef PRODUCTNAME "GSET"
 !define /IfNDef PUBLISHER   "GSET Team"
 !define /IfNDef WEBSITE     "https://github.com/Crazygiscool/GSETLang"
-!define /IfNDef VERSION     "3.3.0"
+!define /IfNDef VERSION     "3.4.0"
 !define /IfNDef UNINST_KEY  "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET"
 
 ; File inputs. Defaults resolve relative to this script's directory.

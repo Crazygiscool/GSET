@@ -7,7 +7,7 @@
 
 set -e
 
-VERSION="3.3.3"
+VERSION="3.4.0"
 # Resolve the latest release dynamically so the one-liner never installs stale bits.
 RESOLVED=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
   | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -n1)
@@ -41,8 +41,8 @@ if is_windows; then
         echo "Option 2: Install PowerShell then run:"
         echo "  irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex"
         echo ""
-        echo "Option 3: Use winget (if installed):"
-        echo "  winget install GSETLang.GSET"
+        echo "Option 3: Use PowerShell installer (Windows Git Bash):"
+        echo "  powershell -ExecutionPolicy Bypass -Command \"irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex\""
         exit 1
     fi
     exit 0
