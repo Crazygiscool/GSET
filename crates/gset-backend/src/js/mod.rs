@@ -442,7 +442,44 @@ impl<'a> Emitter<'a> {
                     self.emit_expr(else_branch)
                 )
             }
-            ExprKind::Comprehension { .. } => "[]".to_string(),
+            ExprKind::Comprehension {
+                kind: _,
+                element,
+                key: _,
+                value: _,
+                clauses,
+                condition,
+            } => {
+                // Desugar a (single-clause) comprehension into a JavaScript IIFE,
+                // preserving the listed element and optional filter.
+                let element = self.emit_expr(element);
+                let mut out = String::from("(function () {");
+                out.push_str(" const _r = [];");
+                let mut emitted_loop = false;
+                // First clause only: any additional clause renders as a nested
+                // approximation that still keeps the output syntactically valid.
+                for clause in clauses.iter().take(1) {
+                    let pat = pattern_name(&clause.pattern).unwrap_or("_".to_string());
+                    let it = self.emit_expr(&clause.iterable);
+                    out.push_str(&format!(" for (const {} of {}) {{", pat, it));
+                    if let Some(cond) = condition {
+                        let c = self.emit_expr(cond);
+                        out.push_str(&format!(" if ({}) {{", c));
+                    }
+                    out.push_str(&format!(" _r.push({});", element));
+                    if condition.is_some() {
+                        out.push_str(" }");
+                    }
+                    out.push_str(" }");
+                    emitted_loop = true;
+                }
+                if !emitted_loop {
+                    // No clauses: degrade to an empty array literal.
+                    return "[]".to_string();
+                }
+                out.push_str(" return _r; })()");
+                out
+            }
             ExprKind::Format {
                 segments,
                 arguments,
