@@ -356,6 +356,41 @@ impl<'a> Emitter<'a> {
                 self.emit_block(block);
                 self.out.dedent();
             }
+            Stmt::Switch {
+                scrutinee,
+                cases,
+                default,
+                span,
+            } => {
+                let subject = match scrutinee {
+                    Some(expr) => self.emit_expr(expr),
+                    None => {
+                        unsupported(self.diagnostics, *span, "a tag-style `match`");
+                        return;
+                    }
+                };
+                self.out.writeln(&format!("match {}:", subject));
+                self.out.indent();
+                for case in cases {
+                    let pat = self.emit_pattern(&case.pattern);
+                    let guard = case
+                        .guard
+                        .as_ref()
+                        .map(|g| format!(" if {}", self.emit_expr(g)))
+                        .unwrap_or_default();
+                    self.out.writeln(&format!("case {}{}:", pat, guard));
+                    self.out.indent();
+                    self.emit_block(&case.body);
+                    self.out.dedent();
+                }
+                if let Some(default) = default {
+                    self.out.writeln("case _:");
+                    self.out.indent();
+                    self.emit_block(default);
+                    self.out.dedent();
+                }
+                self.out.dedent();
+            }
             Stmt::Try {
                 body,
                 handlers,

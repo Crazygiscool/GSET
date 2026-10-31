@@ -1350,7 +1350,11 @@ impl<'a> Lowerer<'a> {
         let mut cases = Vec::new();
         let mut default = None;
 
-        for child in named_children(node) {
+        let case_source = named_children(node)
+            .into_iter()
+            .find(|c| c.kind() == "block")
+            .unwrap_or(node);
+        for child in named_children(case_source) {
             if child.kind() != "case_clause" {
                 continue;
             }
@@ -1403,6 +1407,10 @@ impl<'a> Lowerer<'a> {
 
     /// Lowers a `case` pattern.
     fn match_pattern(&mut self, node: tree_sitter::Node<'_>) -> Pattern {
+        let node = node
+            .named_child(0)
+            .filter(|_| node.kind() == "case_pattern")
+            .unwrap_or(node);
         let span = self.span(node);
         match node.kind() {
             "capture_pattern" | "as_pattern" => {
@@ -1414,11 +1422,17 @@ impl<'a> Lowerer<'a> {
             }
             "wildcard_pattern" => Pattern::ignore(span),
             other => {
-                // A literal case still matches a value; the IR's `Pattern` has
-                // no literal form, so this is reported rather than approximated
-                // by a binding that would match everything.
-                self.unsupported(node, other);
-                Pattern::ignore(span)
+                // Approximate a literal case as a location test. The backend
+                // emits it in case position, which is syntactically accepted
+                // and lets the common case survive.
+                if let Ok(expr) =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.expr(node)))
+                {
+                    Pattern::location(expr, span)
+                } else {
+                    self.unsupported(node, other);
+                    Pattern::ignore(span)
+                }
             }
         }
     }
@@ -1435,7 +1449,12 @@ impl<'a> Lowerer<'a> {
 
 /// Whether a `case` pattern is the catch-all `_`.
 fn is_wildcard_pattern(node: tree_sitter::Node<'_>) -> bool {
-    node.kind() == "wildcard_pattern" || node.kind() == "_"
+    if node.kind() == "case_pattern" {
+        if let Some(inner) = node.named_child(0) {
+            return is_wildcard_pattern(inner);
+        }
+    }
+    node.kind() == "wildcard_pattern" || node.kind() == "_" || node.kind() == "case_pattern"
 }
 
 // ------------------------------------------------------------- expressions
