@@ -8,7 +8,7 @@ use gset_ir::{
     Module, Pattern, PatternKind, SourceMap, Stmt, UnaryOp, VarDecl,
 };
 
-use crate::backend::Backend;
+use crate::backend::{Backend, unsupported};
 use crate::target::{Capability, Support, TargetId};
 use crate::writer::CodeWriter;
 use gset_ir::DiagnosticBag;
@@ -88,7 +88,9 @@ impl<'a> Emitter<'a> {
             match item {
                 Item::Global(_) => {}
                 Item::Stmt(s) => self.emit_stmt(s),
-                Item::Import(_) => {}
+                Item::Import(import) => {
+                    unsupported(self.diagnostics, import.span, "imports");
+                }
                 _ => {}
             }
         }

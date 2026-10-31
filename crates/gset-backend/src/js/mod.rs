@@ -8,7 +8,7 @@ use gset_ir::{
     Module, Pattern, PatternKind, SourceMap, Stmt, UnaryOp, VarDecl,
 };
 
-use crate::backend::Backend;
+use crate::backend::{Backend, unsupported};
 use crate::target::{Capability, Support, TargetId};
 use crate::writer::CodeWriter;
 use gset_ir::DiagnosticBag;
@@ -35,20 +35,21 @@ impl Backend for JavaScript {
         module: &Module,
         _source_map: &SourceMap,
         writer: &mut CodeWriter,
-        _diagnostics: &mut DiagnosticBag,
+        diagnostics: &mut DiagnosticBag,
     ) {
-        let mut em = Emitter::new(writer);
+        let mut em = Emitter::new(writer, diagnostics);
         em.emit_module(module);
     }
 }
 
 struct Emitter<'a> {
     out: &'a mut CodeWriter,
+    diagnostics: &'a mut DiagnosticBag,
 }
 
 impl<'a> Emitter<'a> {
-    fn new(out: &'a mut CodeWriter) -> Self {
-        Self { out }
+    fn new(out: &'a mut CodeWriter, diagnostics: &'a mut DiagnosticBag) -> Self {
+        Self { out, diagnostics }
     }
 
     fn emit_module(&mut self, module: &Module) {
@@ -66,7 +67,9 @@ impl<'a> Emitter<'a> {
                     self.emit_class(c);
                     self.out.blank();
                 }
-                Item::Import(_) => {}
+                Item::Import(import) => {
+                    unsupported(self.diagnostics, import.span, "imports");
+                }
                 Item::Stmt(s) => {
                     self.emit_stmt(s);
                     self.out.newline();
