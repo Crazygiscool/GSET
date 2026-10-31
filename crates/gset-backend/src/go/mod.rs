@@ -958,7 +958,7 @@ impl<'a> Emitter<'a> {
                 };
                 self.out.writeln(&format!("switch {} {{", subject));
                 self.out.indent();
-                let mut has_default = false;
+                let has_default = false;
                 for case in cases {
                     let pattern_text = self.emit_pattern(&case.pattern);
                     let is_wildcard = matches!(case.pattern.kind, PatternKind::Ignore);
