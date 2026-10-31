@@ -54,6 +54,7 @@ struct Emitter<'a> {
     known_functions: std::collections::HashSet<String>,
     locals: std::collections::HashSet<String>,
     in_method: bool,
+    known_classes: std::collections::HashSet<String>,
 }
 
 impl<'a> Emitter<'a> {
@@ -64,6 +65,7 @@ impl<'a> Emitter<'a> {
             known_functions: std::collections::HashSet::new(),
             locals: std::collections::HashSet::new(),
             in_method: false,
+            known_classes: std::collections::HashSet::new(),
         }
     }
 
@@ -76,11 +78,13 @@ impl<'a> Emitter<'a> {
                 for m in &c.methods {
                     self.known_functions.insert(java_ident(&m.name));
                 }
+                self.known_classes.insert(java_ident(&c.name));
             }
             if let Item::Global(g) = item
-                && let Some(name) = pattern_name(&g.pattern) {
-                    self.known_functions.insert(name);
-                }
+                && let Some(name) = pattern_name(&g.pattern)
+            {
+                self.known_functions.insert(name);
+            }
         }
         self.out.writeln("final class Program {");
         self.out.indent();
@@ -153,10 +157,25 @@ impl<'a> Emitter<'a> {
 
     fn emit_global(&mut self, g: &VarDecl) {
         let name = pattern_name(&g.pattern).unwrap_or("x".into());
+        let dynamic_type = if let Some(v) = &g.value {
+            let v = self.emit_expr(v);
+            if let Some(cls) = v
+                .strip_prefix("new ")
+                .and_then(|s| s.split('(').next())
+                .map(|s| s.to_string())
+                && self.known_classes.contains(&cls)
+            {
+                cls
+            } else {
+                "Object".to_string()
+            }
+        } else {
+            "Object".to_string()
+        };
         let type_name = match g.ty {
-            Some(gset_ir::Type::Str) | Some(gset_ir::Type::StrLit) => "String",
-            Some(gset_ir::Type::Bool) => "boolean",
-            _ => "Object",
+            Some(gset_ir::Type::Str) | Some(gset_ir::Type::StrLit) => "String".to_string(),
+            Some(gset_ir::Type::Bool) => "boolean".to_string(),
+            _ => dynamic_type,
         };
         if let Some(v) = &g.value {
             let v = self.emit_expr(v);
@@ -205,7 +224,72 @@ impl<'a> Emitter<'a> {
         self.out
             .writeln(&format!("static class {} {{", java_ident(&c.name)));
         self.out.indent();
+        let mut init_fields: Vec<String> = Vec::new();
+        let mut init_params: Vec<String> = Vec::new();
+        if let Some(init) = c
+            .constructors
+            .iter()
+            .find(|m| java_ident(&m.name.to_string()) == "__init__")
+        {
+            for stmt in &init.body.statements {
+                if let Stmt::Assign { target, value, .. } = stmt {
+                    match &target.kind {
+                        PatternKind::Location(expr) => {
+                            if let ExprKind::Field {
+                                target: target_expr,
+                                field,
+                            } = &expr.kind
+                            {
+                                if let ExprKind::Path(path) = &target_expr.kind
+                                    && !path.segments.is_empty()
+                                    && path.segments[0].to_string() == "self"
+                                {
+                                    init_fields.push(field.to_string());
+                                    if let ExprKind::Path(value_path) = &value.kind
+                                        && value_path.segments.len() == 1
+                                        && !init_params
+                                            .contains(&value_path.segments[0].to_string())
+                                    {
+                                        init_params.push(value_path.segments[0].to_string());
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        for field in &init_fields {
+            self.out
+                .writeln(&format!("public Object {} = null;", java_ident(field)));
+        }
+        if !init_fields.is_empty() || !init_params.is_empty() {
+            let ctor_params = init_params
+                .iter()
+                .map(|p| format!("Object {}", java_ident(p)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.out.writeln(&format!(
+                "public {}({}) {{",
+                java_ident(&c.name),
+                ctor_params
+            ));
+            self.out.indent();
+            for field in &init_fields {
+                let field = java_ident(field);
+                if init_params.iter().any(|p| *p == field) {
+                    self.out.writeln(&format!("this.{} = {};", field, field));
+                }
+            }
+            self.out.dedent();
+            self.out.writeln("}");
+        } else {
+            self.out
+                .writeln(&format!("public {}() {{}}", java_ident(&c.name)));
+        }
         for m in &c.methods {
+            // constructors are emitted above
             let name = &m.name;
             let mut method_params = m.params.iter().filter_map(pattern_name).collect::<Vec<_>>();
             if method_params.first().map(String::as_str) == Some("self") {
@@ -622,7 +706,16 @@ impl<'a> Emitter<'a> {
                         .is_some_and(|c| c.is_uppercase())
                 {
                     let c = java_ident(path.segments[0].to_string());
-                    return format!("new {}()", c);
+                    let a = args
+                        .iter()
+                        .map(|e| self.emit_expr(e))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if a.is_empty() {
+                        return format!("new {}()", c);
+                    } else {
+                        return format!("new {}({})", c, a);
+                    }
                 }
                 let c = self.emit_expr(callee);
                 let mut out = Vec::new();
@@ -688,7 +781,11 @@ impl<'a> Emitter<'a> {
                 } else {
                     self.emit_expr(target)
                 };
-                format!("gsetAttr({}, \"{}\")", target_str, field)
+                if target_str == "this" {
+                    format!("this.{}", field)
+                } else {
+                    format!("gsetAttr({}, \"{}\")", target_str, field)
+                }
             }
             ExprKind::Index { target, index } => {
                 format!(
