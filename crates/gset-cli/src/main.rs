@@ -228,13 +228,9 @@ fn run_java(directory: &Path, program: &Path) -> ExitCode {
         }
     }
 
-    let class_name = program
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("program");
     let execution = ProcessCommand::new("java")
         .current_dir(directory)
-        .arg(class_name)
+        .arg("Program")
         .status();
     match execution {
         Ok(status) => ExitCode::from(

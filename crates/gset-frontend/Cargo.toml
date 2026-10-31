@@ -18,7 +18,7 @@ default = ["python", "javascript", "typescript"]
 python = ["dep:tree-sitter-python"]
 javascript = ["dep:tree-sitter-javascript"]
 typescript = ["dep:tree-sitter-typescript"]
-go = []
+go = ["dep:tree-sitter-go"]
 
 [dependencies]
 gset-ir = { workspace = true }
@@ -26,4 +26,5 @@ tree-sitter = "0.27"
 tree-sitter-python = { version = "0.25", optional = true }
 tree-sitter-javascript = { version = "0.25", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-go = { version = "0.25", optional = true }
 thiserror = { workspace = true }
