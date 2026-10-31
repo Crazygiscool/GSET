@@ -252,12 +252,6 @@ impl<'a> Emitter<'a> {
                     self.out.writeln("return;");
                 }
             }
-            Stmt::Break { .. } => {
-                if let Some(flag) = self.loop_else_flags.last().cloned() {
-                    self.out.writeln(&format!("{} = false;", flag));
-                }
-                self.out.writeln("break;");
-            }
             Stmt::Assign { target, value, .. } => {
                 let t = pattern_name(target).unwrap_or("_".into());
                 let v = self.emit_expr(value);
