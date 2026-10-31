@@ -26,7 +26,7 @@ impl Backend for JavaScript {
         use Capability::*;
         match capability {
             Classes | FStrings | Closures | Async | MultipleAssignment | Exceptions
-            | Comprehensions => Support::Native,
+            | Comprehensions | Slices => Support::Native,
             _ => Support::Unsupported,
         }
     }
