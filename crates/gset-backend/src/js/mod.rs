@@ -416,6 +416,9 @@ impl<'a> Emitter<'a> {
                     format!("{}.slice()", t)
                 }
             }
+            ExprKind::Await { expr: inner } => {
+                format!("await {}", self.emit_expr(inner))
+            }
             ExprKind::Lambda { params, body } => {
                 let ps = params
                     .iter()
