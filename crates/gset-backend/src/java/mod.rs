@@ -95,7 +95,11 @@ impl<'a> Emitter<'a> {
                 Item::Global(_) => {}
                 Item::Function(_) => {}
                 Item::Class(c) => {
-                    if let Some(_) = c.methods.iter().find(|m| m.name.to_string() == "main") {
+                    if c.methods
+                        .iter()
+                        .find(|m| m.name.to_string() == "main")
+                        .is_some()
+                    {
                         self.out.writeln(&format!("{}.main(args);", c.name));
                     }
                 }
