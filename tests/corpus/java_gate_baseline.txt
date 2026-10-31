@@ -18,8 +18,8 @@ backend    loops
 ok         module_shape
 ok         null_handling
 ok         numeric_literals
-malformed  operators
+ok         operators
 ok         returns
 backend    typed
 
-8 ok / 0 frontend / 14 backend / 1 malformed / 0 invalid
+9 ok / 0 frontend / 14 backend / 0 malformed / 0 invalid

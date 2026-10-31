@@ -743,8 +743,22 @@ impl<'a> Emitter<'a> {
                     .map(|e| self.emit_expr(e))
                     .collect::<Vec<_>>()
                     .join(", ");
-                if m == "split" && a.is_empty() {
-                    return format!("{}.split(\"\\\\\\\\s+\")", r);
+                match method.as_ref() {
+                    "strip" => return format!("gsetTrim({})", r),
+                    "lower" => return format!("gsetLower({})", r),
+                    "upper" => return format!("gsetUpper({})", r),
+                    "replace" => return format!("gsetReplace({}, {})", r, a),
+                    "split" => {
+                        if a.is_empty() {
+                            return format!("gsetSplit({}, \"\\\\\\\\s+\")", r);
+                        } else {
+                            return format!("gsetSplit({}, {})", r, a);
+                        }
+                    }
+                    "startswith" => return format!("gsetStartsWith({}, {})", r, a),
+                    "endswith" => return format!("gsetEndsWith({}, {})", r, a),
+                    "find" => return format!("gsetFind({}, {})", r, a),
+                    _ => {}
                 }
                 if a.is_empty() {
                     format!("{}.{}()", r, m)
@@ -971,6 +985,14 @@ impl<'a> Emitter<'a> {
             .writeln("public static Object gsetSlice(Object t) { return t; }");
         self.out
             .writeln("public static Object gsetCall(Object f, Object... args) { return null; }");
+        self.out.writeln("public static Object gsetTrim(Object a) { return a instanceof String ? ((String) a).trim() : a; }");
+        self.out.writeln("public static Object gsetLower(Object a) { return a instanceof String ? ((String) a).toLowerCase() : a; }");
+        self.out.writeln("public static Object gsetUpper(Object a) { return a instanceof String ? ((String) a).toUpperCase() : a; }");
+        self.out.writeln("public static Object gsetReplace(Object a, Object b, Object c) { return (a instanceof String && b instanceof String && c instanceof String) ? ((String) a).replace((String) b, (String) c) : a; }");
+        self.out.writeln("public static Object gsetSplit(Object a, Object b) { return (a instanceof String) ? java.util.Arrays.asList(((String) a).split(b == null ? \"\\\\\\\\s+\" : String.valueOf(b))) : a; }");
+        self.out.writeln("public static boolean gsetStartsWith(Object a, Object b) { return a instanceof String && b instanceof String && ((String) a).startsWith((String) b); }");
+        self.out.writeln("public static boolean gsetEndsWith(Object a, Object b) { return a instanceof String && b instanceof String && ((String) a).endsWith((String) b); }");
+        self.out.writeln("public static Object gsetFind(Object a, Object b) { return a instanceof String && b instanceof String ? ((String) a).indexOf((String) b) : null; }");
         self.out.writeln("public static Object gsetNum(String s) { s = s.replace(\"_\", \"\"); if (s.startsWith(\"0x\") || s.startsWith(\"0X\")) return new java.math.BigInteger(s.substring(2), 16); if (s.startsWith(\"0o\") || s.startsWith(\"0O\")) return new java.math.BigInteger(s.substring(2), 8); if (s.startsWith(\"0b\") || s.startsWith(\"0B\")) return new java.math.BigInteger(s.substring(2), 2); return new java.math.BigInteger(s); }");
     }
 }
