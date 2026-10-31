@@ -58,7 +58,7 @@ impl Backend for Go {
             Records | Enums | Interfaces | TypeAliases => Support::Unsupported,
             Comprehensions => Support::Desugared,
             Generators => Support::Unsupported,
-            Exceptions => Support::Unsupported,
+            Exceptions => Support::Desugared,
             ContextManagers => Support::Unsupported,
             Decorators => Support::Unsupported,
             Async => Support::Unsupported,
@@ -874,6 +874,46 @@ impl<'a> Emitter<'a> {
                     self.out
                         .writeln(&format!("defer func() {{ _ = {value} }}()"));
                 }
+            }
+            Stmt::Try {
+                body,
+                handlers,
+                finally,
+                ..
+            } => {
+                self.out.writeln("func() {");
+                self.out.indent();
+                self.out.writeln("defer func() {");
+                self.out.indent();
+                self.out.writeln("gsetHandled := false");
+                self.out.writeln("r := recover()");
+                self.out.writeln("if r != nil {");
+                self.out.indent();
+                if !handlers.is_empty() {
+                    if let Some(binding) = &handlers[0].binding {
+                        for name in binding.bound_names() {
+                            self.out.writeln(&format!("{} := r", name));
+                            self.out.writeln(&format!("_ = {}", name));
+                        }
+                    }
+                    self.emit_block_body(&handlers[0].body);
+                    self.out.writeln("gsetHandled = true");
+                }
+                self.out.dedent();
+                self.out.writeln("}");
+                if let Some(finally_body) = finally {
+                    self.emit_block_body(finally_body);
+                }
+                self.out.writeln("if r != nil && !gsetHandled {");
+                self.out.indent();
+                self.out.writeln("panic(r)");
+                self.out.dedent();
+                self.out.writeln("}");
+                self.out.dedent();
+                self.out.writeln("}()");
+                self.emit_block_body(body);
+                self.out.dedent();
+                self.out.writeln("}()");
             }
             Stmt::LocalItem(item) => self.emit_local_item(item),
             Stmt::Empty { .. } => {}
