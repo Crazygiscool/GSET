@@ -489,7 +489,11 @@ impl<'a> Emitter<'a> {
                     .map(|e| self.emit_expr(e))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{}({})", c, a)
+                if c.chars().next().is_some_and(|ch| ch.is_uppercase()) {
+                    format!("new {}({})", c, a)
+                } else {
+                    format!("{}({})", c, a)
+                }
             }
             ExprKind::Index { target, index } => {
                 format!("{}[{}]", self.emit_expr(target), self.emit_expr(index))
