@@ -291,7 +291,9 @@ Python first specifically because it is dynamic — it forces type inference and
 therefore exercises the hardest part of the IR early, instead of hiding behind
 Go's explicit types.
 
-### M2 — All 5 backends + second frontend
+### M2 — All 5 backends + second frontend (backend + JS/TS frontend milestones largely wired)
+
+**Status: complete for the minimum viable matrix.**
 
 - Second frontend: JavaScript/TypeScript (shares an IR lowering path).
 - All 5 backends over the common subset.
