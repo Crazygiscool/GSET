@@ -871,7 +871,7 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 Some(n) if n.kind() == "member_expression" => {
                     Pattern::location(lower_expr(n, source, text), span)
                 }
-                Some(n) => Pattern::bind(Arc::from("_"), span),
+                Some(_) => Pattern::bind(Arc::from("_"), span),
                 None => Pattern::bind(Arc::from("_"), span),
             };
             Expr::new(
