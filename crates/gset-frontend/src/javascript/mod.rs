@@ -862,14 +862,21 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 };
                 (val, previous, op)
             };
-            // target pattern
-            let target_name = match node.child_by_field_name("left") {
-                Some(n) if n.kind() == "identifier" => text_of(n, text),
-                _ => "_",
+            // target pattern. An identifier names a binding; an access such
+            // as `obj.value = x` is a location rather than a new binding.
+            let target = match node.child_by_field_name("left") {
+                Some(n) if n.kind() == "identifier" => {
+                    Pattern::bind(Arc::from(text_of(n, text)), span)
+                }
+                Some(n) if n.kind() == "member_expression" => {
+                    Pattern::location(lower_expr(n, source, text), span)
+                }
+                Some(n) => Pattern::bind(Arc::from("_"), span),
+                None => Pattern::bind(Arc::from("_"), span),
             };
             Expr::new(
                 ExprKind::Assign {
-                    target: Box::new(Pattern::bind(Arc::from(target_name), span)),
+                    target: Box::new(target),
                     previous,
                     op,
                     value: Box::new(value),

@@ -206,6 +206,27 @@ impl<'a> Emitter<'a> {
     fn emit_class(&mut self, c: &Class) {
         self.out.writeln(&format!("class {} {{", c.name));
         self.out.indent();
+        if let Some(init) = c
+            .constructors
+            .first()
+            .or_else(|| c.methods.iter().find(|m| m.name.to_string() == "__init__"))
+        {
+            let mut params = init
+                .params
+                .iter()
+                .filter_map(pattern_name)
+                .collect::<Vec<_>>();
+            if matches!(params.first().map(String::as_str), Some("self")) {
+                params.remove(0);
+            }
+            let params = params.join(", ");
+            self.out.writeln(&format!("constructor({}) {{", params));
+            self.out.indent();
+            self.emit_block(&init.body);
+            self.out.dedent();
+            self.out.writeln("}");
+            self.out.newline();
+        }
         for m in &c.methods {
             self.emit_method(m);
             self.out.newline();
@@ -253,7 +274,11 @@ impl<'a> Emitter<'a> {
                 }
             }
             Stmt::Assign { target, value, .. } => {
-                let t = pattern_name(target).unwrap_or("_".into());
+                let t = if let PatternKind::Location(expr) = &target.kind {
+                    self.emit_expr(expr)
+                } else {
+                    pattern_name(target).unwrap_or("_".into())
+                };
                 let v = self.emit_expr(value);
                 self.out.writeln(&format!("{} = {};", t, v));
             }
@@ -549,6 +574,15 @@ impl<'a> Emitter<'a> {
                 let r = self.emit_expr(receiver);
                 let a = self.emit_arg_list(args);
                 format!("{}.{}({})", r, target_method, a)
+            }
+            ExprKind::Assign { target, value, .. } => {
+                let t = if let PatternKind::Location(expr) = &target.kind {
+                    self.emit_expr(expr)
+                } else {
+                    pattern_name(target).unwrap_or("_".into())
+                };
+                let v = self.emit_expr(value);
+                format!("{} = {}", t, v)
             }
             ExprKind::Field { target, field } => {
                 format!("{}.{}", self.emit_expr(target), field)

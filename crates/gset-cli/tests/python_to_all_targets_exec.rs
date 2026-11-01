@@ -12,10 +12,12 @@ print(fib(10))
 
 const CLS: &str = r#"
 class Foo:
+    def __init__(self, value):
+        self.value = value
     def bar(self):
-        return 42
+        return self.value
 
-f = Foo()
+f = Foo(42)
 print(f.bar())
 "#;
 
