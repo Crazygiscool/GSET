@@ -1790,6 +1790,10 @@ impl<'a> Emitter<'a> {
                 arguments,
                 formats,
             } => self.emit_format(segments, arguments, formats, expr.span),
+            ExprKind::Await { expr } => {
+                unsupported(self.diagnostics, expr.span, "an `await`");
+                self.emit_expr(expr)
+            }
             ExprKind::Error(_) => "nil".to_string(),
             other => {
                 unsupported(self.diagnostics, expr.span, describe_expr(other));
