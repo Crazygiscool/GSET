@@ -1739,13 +1739,16 @@ impl<'a> Emitter<'a> {
                 *inclusive,
             ),
             ExprKind::Field { target, field } => {
-                if self.go_type_of(target).is_none() {
+                let target_text = self.emit_expr(target);
+                // `self` is the method receiver, so its own fields are always
+                // addressable even when its type was never declared.
+                if target_text == "self" {
+                    format!("{target_text}.{field}")
+                } else if self.go_type_of(target).is_none() {
                     let helper = self.use_helper("gsetAttr");
-                    let target = self.emit_expr(target);
-                    format!("{helper}({target}, {:?})", field)
+                    format!("{helper}({target_text}, {:?})", field)
                 } else {
-                    let target = self.emit_expr(target);
-                    format!("{target}.{field}")
+                    format!("{target_text}.{field}")
                 }
             }
             ExprKind::List { elements } | ExprKind::Tuple { elements } => {
