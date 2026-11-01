@@ -4,7 +4,7 @@ backend    classes
 backend    comprehensions
 backend    context_managers
 ok         declaration_after_if
-malformed  declarations
+ok         declarations
 backend    decorators
 backend    destructuring
 backend    exceptions
@@ -22,4 +22,4 @@ backend    operators
 ok         returns
 ok         typed
 
-8 ok / 0 frontend / 14 backend / 1 malformed / 0 invalid
+9 ok / 0 frontend / 14 backend / 0 malformed / 0 invalid
