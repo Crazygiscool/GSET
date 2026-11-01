@@ -130,8 +130,33 @@ impl<'a> Emitter<'a> {
     }
 
     fn emit_class(&mut self, c: &Class) {
+        let mut fields = std::collections::BTreeSet::new();
+        for m in &c.methods {
+            collect_self_fields_block(&m.body, &mut fields);
+        }
         self.out.writeln(&format!("class {}", c.name));
         self.out.indent();
+        for field in &fields {
+            self.out.writeln(&format!("attr_accessor :{}", field));
+        }
+        if let Some(init) = c.constructors.first() {
+            let mut params = init
+                .params
+                .iter()
+                .filter_map(pattern_name)
+                .collect::<Vec<_>>();
+            if matches!(params.first().map(String::as_str), Some("self")) {
+                params.remove(0);
+            }
+            let params = params.join(", ");
+            self.out.writeln(&format!("def initialize({})", params));
+            self.out.indent();
+            // Python's initializer body is the source of truth.
+            self.emit_block(&init.body);
+            self.out.dedent();
+            self.out.writeln("end");
+            self.out.newline();
+        }
         for m in &c.methods {
             self.emit_method(m);
             self.out.newline();
@@ -162,7 +187,10 @@ impl<'a> Emitter<'a> {
                 }
             }
             Stmt::Assign { target, value, .. } => {
-                let t = pattern_name(target).unwrap_or("_".into());
+                let t = match &target.kind {
+                    PatternKind::Location(expr) => self.emit_expr(expr),
+                    _ => pattern_name(target).unwrap_or("_".into()),
+                };
                 let v = self.emit_expr(value);
                 self.out.writeln(&format!("{} = {};", t, v));
             }
@@ -613,5 +641,184 @@ fn pattern_name(p: &Pattern) -> Option<String> {
         Some(p.names[0].to_string())
     } else {
         None
+    }
+}
+
+fn collect_self_fields_block(block: &gset_ir::Block, out: &mut std::collections::BTreeSet<String>) {
+    for s in &block.statements {
+        collect_self_fields_stmt(s, out);
+    }
+}
+
+fn collect_self_fields_stmt(stmt: &gset_ir::Stmt, out: &mut std::collections::BTreeSet<String>) {
+    use gset_ir::Stmt;
+    match stmt {
+        Stmt::Block(b) => collect_self_fields_block(b, out),
+        Stmt::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_self_fields_block(then_branch, out);
+            if let Some(else_branch) = else_branch {
+                match else_branch.as_ref() {
+                    gset_ir::Else::Block(b) => collect_self_fields_block(b, out),
+                    gset_ir::Else::If(s) => collect_self_fields_stmt(s, out),
+                }
+            }
+        }
+        Stmt::While {
+            body, else_body, ..
+        } => {
+            collect_self_fields_block(body, out);
+            if let Some(eb) = else_body {
+                collect_self_fields_block(eb, out);
+            }
+        }
+        Stmt::ForIn {
+            body, else_body, ..
+        } => {
+            collect_self_fields_block(body, out);
+            if let Some(eb) = else_body {
+                collect_self_fields_block(eb, out);
+            }
+        }
+        Stmt::For { body, .. } | Stmt::DoWhile { body, .. } | Stmt::With { body, .. } => {
+            collect_self_fields_block(body, out)
+        }
+        Stmt::Decl(_) | Stmt::Assign { .. } | Stmt::Expr(_) | Stmt::Return { .. } => {
+            collect_self_fields_expr_in_stmt(stmt, out)
+        }
+        _ => {}
+    }
+}
+
+fn collect_self_fields_expr_in_stmt(
+    stmt: &gset_ir::Stmt,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    use gset_ir::Stmt;
+    match stmt {
+        Stmt::Decl(v) => {
+            if let Some(v) = &v.value {
+                collect_self_fields_expr(v, out);
+            }
+        }
+        Stmt::Assign { value, .. } => collect_self_fields_expr(value, out),
+        Stmt::Expr(e) | Stmt::Return { value: Some(e), .. } => collect_self_fields_expr(e, out),
+        _ => {}
+    }
+}
+
+fn collect_self_fields_expr(expr: &gset_ir::Expr, out: &mut std::collections::BTreeSet<String>) {
+    use gset_ir::ExprKind;
+    match &expr.kind {
+        ExprKind::Field { target, field } => {
+            if let ExprKind::Path(path) = &target.kind
+                && !path.segments.is_empty()
+                && path.segments[0].to_string() == "self"
+            {
+                out.insert(field.to_string());
+            }
+            collect_self_fields_expr(target, out);
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            collect_self_fields_expr(lhs, out);
+            collect_self_fields_expr(rhs, out);
+        }
+        ExprKind::Compare { lhs, rhs, .. } => {
+            collect_self_fields_expr(lhs, out);
+            collect_self_fields_expr(rhs, out);
+        }
+        ExprKind::Logical { lhs, rhs, .. } => {
+            collect_self_fields_expr(lhs, out);
+            collect_self_fields_expr(rhs, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_self_fields_expr(operand, out),
+        ExprKind::Call { callee, args, .. } => {
+            collect_self_fields_expr(callee, out);
+            for e in args {
+                collect_self_fields_expr(e, out);
+            }
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
+            collect_self_fields_expr(receiver, out);
+            for e in args {
+                collect_self_fields_expr(e, out);
+            }
+        }
+        ExprKind::Index { target, index } => {
+            collect_self_fields_expr(target, out);
+            collect_self_fields_expr(index, out);
+        }
+        ExprKind::Slice {
+            target,
+            start,
+            end,
+            step,
+            ..
+        } => {
+            collect_self_fields_expr(target, out);
+            if let Some(x) = start {
+                collect_self_fields_expr(x, out);
+            }
+            if let Some(x) = end {
+                collect_self_fields_expr(x, out);
+            }
+            if let Some(x) = step {
+                collect_self_fields_expr(x, out);
+            }
+        }
+        ExprKind::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_self_fields_expr(condition, out);
+            collect_self_fields_expr(then_branch, out);
+            collect_self_fields_expr(else_branch, out);
+        }
+        ExprKind::List { elements } | ExprKind::Tuple { elements } | ExprKind::Set { elements } => {
+            for e in elements {
+                collect_self_fields_expr(e, out);
+            }
+        }
+        ExprKind::Map { entries } => {
+            for e in entries {
+                collect_self_fields_expr(&e.value, out);
+            }
+        }
+        ExprKind::Await { expr } => collect_self_fields_expr(expr, out),
+        ExprKind::Assign {
+            previous, value, ..
+        } => {
+            if let Some(p) = previous {
+                collect_self_fields_expr(p, out);
+            }
+            collect_self_fields_expr(value, out);
+        }
+        ExprKind::Comprehension {
+            element,
+            key,
+            value,
+            clauses,
+            condition,
+            ..
+        } => {
+            collect_self_fields_expr(element, out);
+            if let Some(k) = key {
+                collect_self_fields_expr(k, out);
+            }
+            if let Some(v) = value {
+                collect_self_fields_expr(v, out);
+            }
+            for c in clauses {
+                collect_self_fields_expr(&c.iterable, out);
+            }
+            if let Some(e) = condition {
+                collect_self_fields_expr(e, out);
+            }
+        }
+        _ => {}
     }
 }
