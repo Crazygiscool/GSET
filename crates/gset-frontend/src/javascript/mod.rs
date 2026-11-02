@@ -97,7 +97,12 @@ impl Frontend for JavaScript {
                     }
                     "program" => {}
                     "interface_declaration" | "type_alias_declaration" => {}
-                    "enum_declaration" | "import_statement" => {}
+                    "enum_declaration" => {}
+                    "import_statement" => {
+                        if let Some(item) = lower_import(child, id, text) {
+                            items.push(item);
+                        }
+                    }
                     "class_declaration" | "abstract_class_declaration" => {
                         if let Some(item) = lower_class(child, id, text) {
                             items.push(item);
@@ -1310,4 +1315,114 @@ fn lower_method_definition(
         generics: Vec::new(),
         span: span_of(node, source),
     })
+}
+
+fn lower_import(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<gset_ir::Item> {
+    let source_node = node.child_by_field_name("source")?;
+    let path = Name::from(strip_quoted(text_of(source_node, text)));
+    if path.is_empty() {
+        return None;
+    }
+    let import_path = gset_ir::Path::single(path.clone());
+
+    // namespace import: `import * as x from "..."`
+    if let Some(namespace) = find_child(node, "namespace_import") {
+        let alias = find_child(namespace, "identifier")
+            .map(|n| Name::from(text_of(n, text)))
+            .or_else(|| Some(Name::from("*")));
+        return Some(gset_ir::Item::Import(gset_ir::Import {
+            path: import_path,
+            kind: gset_ir::ImportKind::Star,
+            alias,
+            resolution: None,
+            span: span_of(node, source),
+        }));
+    }
+
+    // named imports: `import { a, b as c } from "..."`
+    if let Some(named) = find_child(node, "named_imports") {
+        let mut names = Vec::new();
+        let mut ci = 0;
+        while ci < named.child_count() {
+            if let Some(spec) = named.child(ci) {
+                if let Some(name_node) = spec.child_by_field_name("name") {
+                    let original = Name::from(text_of(name_node, text));
+                    let alias = spec
+                        .child_by_field_name("alias")
+                        .map(|n| Name::from(text_of(n, text)));
+                    names.push(gset_ir::ImportedName { original, alias });
+                }
+            }
+            ci += 1;
+        }
+        if !names.is_empty() {
+            return Some(gset_ir::Item::Import(gset_ir::Import {
+                path: import_path,
+                kind: gset_ir::ImportKind::Named(names),
+                alias: None,
+                resolution: None,
+                span: span_of(node, source),
+            }));
+        }
+    }
+
+    // default import: the first identifier child before named/namespace import
+    let alias = node
+        .child_by_field_name("default")
+        .map(|n| Name::from(text_of(n, text)))
+        .or_else(|| {
+            let clause = find_child(node, "import_clause")?;
+            let mut ci = 0;
+            while ci < clause.child_count() {
+                if let Some(child) = clause.child(ci) {
+                    if child.kind() == "identifier" {
+                        return Some(Name::from(text_of(child, text)));
+                    }
+                }
+                ci += 1;
+            }
+            None
+        });
+    if let Some(alias) = alias {
+        Some(gset_ir::Item::Import(gset_ir::Import {
+            path: import_path,
+            kind: gset_ir::ImportKind::Module,
+            alias: Some(alias),
+            resolution: None,
+            span: span_of(node, source),
+        }))
+    } else {
+        Some(gset_ir::Item::Import(gset_ir::Import {
+            path: import_path,
+            kind: gset_ir::ImportKind::Module,
+            alias: None,
+            resolution: None,
+            span: span_of(node, source),
+        }))
+    }
+}
+
+fn find_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
+    let mut ci = 0;
+    while ci < node.child_count() {
+        if let Some(child) = node.child(ci)
+            && child.kind() == kind
+        {
+            return Some(child);
+        }
+        ci += 1;
+    }
+    None
+}
+
+fn strip_quoted(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2
+        && ((trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
+    {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
 }

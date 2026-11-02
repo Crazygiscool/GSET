@@ -89,7 +89,10 @@ impl Frontend for Go {
                             items.push(Item::Stmt(stmt));
                         }
                     }
-                    "package_clause" | "import_declaration" => {}
+                    "package_clause" => {}
+                    "import_declaration" => {
+                        items.extend(lower_imports(child, id, text));
+                    }
                     _ => {
                         diagnostics.push(Diagnostic::warning(
                             span_of(child, id),
@@ -691,5 +694,115 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
             }
         }
         _ => Expr::error(format!("unsupported Go expression: {}", node.kind()), span),
+    }
+}
+
+fn lower_imports(node: tree_sitter::Node, source: SourceId, text: &str) -> Vec<Item> {
+    let mut items = Vec::new();
+    let (declaration, list) = if let Some(list) =
+        node.child_by_field_name("import_spec_list").or_else(|| {
+            let mut found = None;
+            let mut ci = 0;
+            while ci < node.child_count() {
+                if let Some(child) = node.child(ci)
+                    && child.kind() == "import_spec_list"
+                {
+                    found = Some(child);
+                    break;
+                }
+                ci += 1;
+            }
+            found
+        }) {
+        (None, Some(list))
+    } else {
+        (
+            node.child_by_field_name("import_spec").or_else(|| {
+                let mut found = None;
+                let mut ci = 0;
+                while ci < node.child_count() {
+                    if let Some(child) = node.child(ci)
+                        && child.kind() == "import_spec"
+                    {
+                        found = Some(child);
+                        break;
+                    }
+                    ci += 1;
+                }
+                found
+            }),
+            None,
+        )
+    };
+
+    if let Some(spec) = declaration {
+        if let Some(item) = lower_go_import_spec(spec, source, text) {
+            items.push(item);
+        }
+    }
+    if let Some(list) = list {
+        let mut ci = 0;
+        while ci < list.child_count() {
+            if let Some(spec) = list.child(ci) {
+                if spec.kind() == "import_spec"
+                    && let Some(item) = lower_go_import_spec(spec, source, text)
+                {
+                    items.push(item);
+                }
+            }
+            ci += 1;
+        }
+    }
+    items
+}
+
+fn lower_go_import_spec(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Item> {
+    let path_node = node.child_by_field_name("path")?;
+    let path_text = text_of(path_node, text);
+    let path = Name::from(strip_quoted(path_text).trim());
+    if path.is_empty() {
+        return None;
+    }
+    let import_path = gset_ir::Path::single(path.clone());
+    let alias_node = node.child_by_field_name("name");
+    let alias_name = alias_node.map(|n| text_of(n, text).trim().to_string());
+    if alias_name.as_deref() == Some(".") {
+        return Some(Item::Import(gset_ir::Import {
+            path: import_path,
+            kind: gset_ir::ImportKind::Star,
+            alias: None,
+            resolution: None,
+            span: span_of(node, source),
+        }));
+    }
+    if alias_name.as_deref() == Some("_") {
+        return Some(Item::Import(gset_ir::Import {
+            path: import_path,
+            kind: gset_ir::ImportKind::Module,
+            alias: None,
+            resolution: None,
+            span: span_of(node, source),
+        }));
+    }
+    let alias = alias_name
+        .filter(|name| name.chars().all(char::is_alphanumeric) || name == "_")
+        .map(Name::from);
+    Some(Item::Import(gset_ir::Import {
+        path: import_path,
+        kind: gset_ir::ImportKind::Module,
+        alias,
+        resolution: None,
+        span: span_of(node, source),
+    }))
+}
+
+fn strip_quoted(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else if trimmed.starts_with('`') && trimmed.ends_with('`') && trimmed.len() >= 2 {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
     }
 }
