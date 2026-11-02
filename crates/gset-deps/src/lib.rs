@@ -1110,3 +1110,25 @@ mod manifest_dependency_tests {
         assert!(matches!(locked, gset_ir::ModuleSource::LockedRemote { .. }));
     }
 }
+
+#[cfg(test)]
+mod lockfile_priority_tests {
+    use super::*;
+
+    #[test]
+    fn lockfile_version_wins_over_build_manifest() {
+        let root = std::env::temp_dir().join("gset-lock-priority-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[dependencies]\nserde = \"2\"\n").unwrap();
+        std::fs::write(
+            root.join("Cargo.lock"),
+            "[[package]]\nname = \"serde\"\nversion = \"1.0.200\"\n",
+        )
+        .unwrap();
+
+        let versions = manifest_dependency_versions(&root, &Ecosystem::Cargo);
+        assert_eq!(versions.get("serde"), Some(&Some("1.0.200".to_string())));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
