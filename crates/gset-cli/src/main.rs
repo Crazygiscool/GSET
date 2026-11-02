@@ -215,6 +215,8 @@ fn transpile_directory(
         }
     }
 
+    let ecosystem = project_ecosystem(root, &search_sources);
+
     let mut graph = gset_deps::ModuleGraph::new();
     for (id, path) in &module_names {
         graph.add_module(gset_deps::ModuleId(id.clone()), path.clone());
@@ -246,8 +248,26 @@ fn transpile_directory(
                             project_failed = true;
                         }
                     } else if !name.is_empty() {
-                        eprintln!("gset: {}: unresolved import `{name}`", source.display());
-                        project_failed = true;
+                        let resolution = gset_deps::classify_import(&ecosystem, &name);
+                        match &resolution {
+                            gset_ir::ModuleSource::Sdk { runtime } => {
+                                eprintln!(
+                                    "gset: {}: using {runtime} runtime module `{name}`",
+                                    source.display()
+                                );
+                            }
+                            gset_ir::ModuleSource::OpaqueForeign {
+                                requirement,
+                                artifact,
+                            } => {
+                                eprintln!(
+                                    "gset: {}: dependency `{requirement}` is {artifact};                                      provide it with the target package manager",
+                                    source.display()
+                                );
+                            }
+                            _ => {}
+                        }
+                        import.resolution = Some(resolution);
                     }
                 }
             }
@@ -376,6 +396,35 @@ fn transpile_directory(
     } else {
         write_content_hash(&output_root, content_hash);
         ExitCode::SUCCESS
+    }
+}
+
+fn project_ecosystem(_root: &Path, sources: &[PathBuf]) -> gset_deps::Ecosystem {
+    let extension = sources
+        .first()
+        .and_then(|source| source.extension())
+        .and_then(|ext| ext.to_str());
+    let manifest_kind = sources
+        .first()
+        .and_then(|source| source.parent())
+        .and_then(|dir| gset_deps::discover_manifests(dir).ok())
+        .and_then(|manifests| manifests.into_iter().next())
+        .map(|manifest| match manifest.ecosystem {
+            gset_deps::Ecosystem::Pip => gset_deps::Ecosystem::Pip,
+            gset_deps::Ecosystem::Npm => gset_deps::Ecosystem::Npm,
+            gset_deps::Ecosystem::Cargo => gset_deps::Ecosystem::Cargo,
+            gset_deps::Ecosystem::Maven => gset_deps::Ecosystem::Maven,
+            gset_deps::Ecosystem::Go => gset_deps::Ecosystem::Go,
+        });
+    if let Some(ecosystem) = manifest_kind {
+        return ecosystem;
+    }
+    match extension {
+        Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx") => gset_deps::Ecosystem::Npm,
+        Some("rs") => gset_deps::Ecosystem::Cargo,
+        Some("go") => gset_deps::Ecosystem::Go,
+        Some("java") => gset_deps::Ecosystem::Maven,
+        _ => gset_deps::Ecosystem::Pip,
     }
 }
 
