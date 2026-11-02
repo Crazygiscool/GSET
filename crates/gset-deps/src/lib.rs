@@ -1090,6 +1090,14 @@ mod manifest_dependency_tests {
                 .any(|(name, version)| name == "lodash" && version.as_deref() == Some("^4"))
         );
 
+        let package_lock = r#"{ "dependencies": { "lodash": { "version": "4.17.21" } } }"#;
+        let lock_versions = declared_dependency_versions(&Ecosystem::Npm, package_lock);
+        assert!(
+            lock_versions
+                .iter()
+                .any(|(name, version)| name == "lodash" && version.as_deref() == Some("4.17.21"))
+        );
+
         let cargo =
             declared_dependency_versions(&Ecosystem::Cargo, "[dependencies]\nserde = \"1\"\n");
         assert!(
