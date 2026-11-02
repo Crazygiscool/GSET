@@ -338,10 +338,11 @@ Each new language remains a grammar dependency plus a lowering pass.
 
 ### M4 — Local project graph
 
-Status: **in progress**: source discovery, dependency search roots, module-name
-resolution, unresolved-import and cycle diagnostics, parallel lowering, and
-content-hash cache for generated project outputs. Cross-module binding and
-semantic inference still need separate passes.
+Status: **complete**: source discovery and multi-directory search roots; package
+and module-name resolution; dependency graphs and cycle detection;
+unresolved-import diagnostics; parallel lowering; project CLI generation; and
+content-hash cache reuse. Module-level typing still stays local to each file,
+matching single-file behaviour.
 
 Multi-file and multi-directory projects, `--dep-path` search roots,
 package-qualified imports, workspace roots, cycle detection, parallel lowering

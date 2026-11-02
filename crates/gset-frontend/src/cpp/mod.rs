@@ -18,7 +18,10 @@ impl Frontend for Cpp {
         "cpp"
     }
     fn handles_extension(&self, path: &std::path::Path) -> bool {
-        matches!(path.extension().and_then(|e| e.to_str()), Some("cpp" | "cxx" | "cc" | "hpp" | "hxx" | "hh"))
+        matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("cpp" | "cxx" | "cc" | "hpp" | "hxx" | "hh")
+        )
     }
     fn lower(&self, source: &str, text: &str) -> Lowered {
         let mut source_map = SourceMap::new();

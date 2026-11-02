@@ -258,11 +258,40 @@ fn transpile_directory(
         project_failed = true;
     }
 
-    let mut project_modules: Vec<gset_ir::Module> = lowered_sources
+    // Retain each loaded module long enough to infer and emit it as one unit,
+    // so import resolution is not lost between lowering and code generation.
+    let mut project_files: Vec<(
+        PathBuf,
+        String,
+        Option<gset_ir::Module>,
+        gset_ir::SourceMap,
+        gset_ir::DiagnosticBag,
+    )> = lowered_sources
+        .into_iter()
+        .map(|(source, text, lowered)| {
+            (
+                source,
+                text,
+                lowered.module,
+                lowered.source_map,
+                lowered.diagnostics,
+            )
+        })
+        .collect();
+    let module_indices: Vec<usize> = project_files
         .iter()
-        .filter_map(|(_, _, lowered)| lowered.module.clone())
+        .enumerate()
+        .filter(|(_, file)| file.2.is_some())
+        .map(|(index, _)| index)
+        .collect();
+    let mut project_modules: Vec<gset_ir::Module> = module_indices
+        .iter()
+        .map(|&index| project_files[index].2.take().expect("module is present"))
         .collect();
     let project_diagnostics = gset_semantic::infer_project(&mut project_modules);
+    for (index, module) in module_indices.iter().zip(project_modules.into_iter()) {
+        project_files[*index].2 = Some(module);
+    }
     if !project_diagnostics.is_empty() {
         eprintln!("gset: project inference:");
         for diagnostic in project_diagnostics.iter() {
@@ -284,41 +313,59 @@ fn transpile_directory(
         .unwrap_or("txt");
 
     let mut overall_failed = project_failed;
-    for source in &sources {
-        let text = match std::fs::read_to_string(source) {
-            Ok(text) => text,
-            Err(error) => {
-                eprintln!("gset: cannot read {}: {error}", source.display());
-                overall_failed = true;
-                continue;
+    for (source, text, module, source_map, lowered_diagnostics) in &project_files {
+        if sources.contains(source) {
+            eprintln!("gset: {}", source.display());
+        } else {
+            continue;
+        }
+
+        let backend = gset_backend::backend_by_name(target);
+        let (mut text_output, mut failed) = (String::new(), false);
+        let mut diagnostics = lowered_diagnostics.clone();
+        if let Some(backend) = backend {
+            if let Some(module) = module {
+                let emitted = gset_backend::emit(backend.as_ref(), module, source_map);
+                if emitted.has_errors() {
+                    failed = true;
+                }
+                diagnostics.extend(emitted.diagnostics);
+                text_output = emitted.text;
+            } else {
+                text_output = text.clone();
+                failed = true;
             }
+        } else {
+            eprintln!(
+                "gset: {}: no backend for target `{target}`",
+                source.display()
+            );
+            failed = true;
+        }
+
+        let output = gset_cli::Output {
+            text: text_output,
+            diagnostics,
+            source_map: source_map.clone(),
+            failed,
         };
-        let output = match transpile(&source.to_string_lossy(), &text, from, target) {
-            Ok(output) => output,
-            Err(error) => {
-                eprintln!("gset: {}: {error}", source.display());
-                overall_failed = true;
-                continue;
-            }
-        };
-        eprintln!("gset: {}", source.display());
-        report(&output, verbose);
         if output.failed {
             overall_failed = true;
         }
+        report(&output, verbose);
 
         let relative = source.strip_prefix(root).unwrap_or(source);
-        let mut destination = output_root.join(relative);
-        destination.set_extension(extension);
-        if let Some(parent) = destination.parent()
+        let mut destination_path = output_root.join(relative);
+        destination_path.set_extension(extension);
+        if let Some(parent) = destination_path.parent()
             && let Err(error) = std::fs::create_dir_all(parent)
         {
             eprintln!("gset: cannot create {}: {error}", parent.display());
             overall_failed = true;
             continue;
         }
-        if let Err(error) = std::fs::write(&destination, &output.text) {
-            eprintln!("gset: cannot write {}: {error}", destination.display());
+        if let Err(error) = std::fs::write(&destination_path, &output.text) {
+            eprintln!("gset: cannot write {}: {error}", destination_path.display());
             overall_failed = true;
             continue;
         }
