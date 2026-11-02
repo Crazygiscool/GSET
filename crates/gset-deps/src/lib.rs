@@ -498,26 +498,30 @@ pub fn declared_dependency_versions(
             }
         }
         Ecosystem::Npm => {
-            let mut in_dependencies = false;
-            let mut depth = 0;
-            for line in text.lines() {
-                let trimmed = line.trim();
-                if !in_dependencies {
-                    if trimmed.contains("\"dependencies\"")
-                        || trimmed.contains("\"devDependencies\"")
-                    {
-                        in_dependencies = trimmed.contains('{');
-                        depth = line.chars().filter(|c| *c == '{').count()
-                            - line.chars().filter(|c| *c == '}').count();
-                        collect_npm_versions(trimmed, &mut result);
+            if let Some(dependencies) = parse_npm_dependencies(text) {
+                result.extend(dependencies);
+            } else {
+                let mut in_dependencies = false;
+                let mut depth = 0;
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if !in_dependencies {
+                        if trimmed.contains("\"dependencies\"")
+                            || trimmed.contains("\"devDependencies\"")
+                        {
+                            in_dependencies = trimmed.contains('{');
+                            depth = line.chars().filter(|c| *c == '{').count()
+                                - line.chars().filter(|c| *c == '}').count();
+                            collect_npm_versions(trimmed, &mut result);
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                depth += line.chars().filter(|c| *c == '{').count()
-                    - line.chars().filter(|c| *c == '}').count();
-                collect_npm_versions(trimmed, &mut result);
-                if depth <= 0 {
-                    in_dependencies = false;
+                    depth += line.chars().filter(|c| *c == '{').count()
+                        - line.chars().filter(|c| *c == '}').count();
+                    collect_npm_versions(trimmed, &mut result);
+                    if depth <= 0 {
+                        in_dependencies = false;
+                    }
                 }
             }
         }
@@ -659,6 +663,156 @@ fn trim_version(version: &str) -> Option<String> {
         None
     } else {
         Some(value.to_string())
+    }
+}
+
+fn parse_npm_dependencies(text: &str) -> Option<Vec<(String, Option<String>)>> {
+    let needle = r#""dependencies""#;
+    let needle_index = text.find(needle)?;
+    let brace_offset = text[needle_index + needle.len()..].find('{')? + needle_index + needle.len();
+    let chars: Vec<char> = text.chars().collect();
+    let open = text[..brace_offset + 1].chars().count() - 1;
+    let mut index = open + 1;
+    let mut depth = 1;
+    let mut result = Vec::new();
+    skip_whitespace_chars(&chars, &mut index);
+    while index < chars.len() && depth > 0 {
+        if chars[index] == '}' {
+            depth -= 1;
+            index += 1;
+            continue;
+        }
+        if chars[index] == ',' {
+            index += 1;
+            skip_whitespace_chars(&chars, &mut index);
+            continue;
+        }
+        let key = match parse_json_string_chars(&chars, &mut index) {
+            Some(key) => key,
+            None => return None,
+        };
+        skip_whitespace_chars(&chars, &mut index);
+        if index >= chars.len() || chars[index] != ':' {
+            return None;
+        }
+        index += 1;
+        skip_whitespace_chars(&chars, &mut index);
+        let version = if index < chars.len() && chars[index] == '{' {
+            let nested = parse_matching_object_chars(&chars, &mut index)?;
+            version_from_object(&nested)
+        } else if index < chars.len() && chars[index] as u32 == 34 {
+            parse_json_string_chars(&chars, &mut index)
+        } else {
+            None
+        };
+        result.push((key, version));
+        skip_whitespace_chars(&chars, &mut index);
+    }
+    eprintln!("npm result={:?}", result);
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+fn version_from_object(object: &str) -> Option<String> {
+    let chars: Vec<char> = object.chars().collect();
+    let mut index = 0;
+    skip_whitespace_chars(&chars, &mut index);
+    if index >= chars.len() || chars[index] != '{' {
+        return None;
+    }
+    index += 1;
+    while index < chars.len() {
+        skip_whitespace_chars(&chars, &mut index);
+        if index >= chars.len() || chars[index] == '}' {
+            break;
+        }
+        if chars[index] == ',' {
+            index += 1;
+            continue;
+        }
+        let key = match parse_json_string_chars(&chars, &mut index) {
+            Some(key) => key,
+            None => return None,
+        };
+        skip_whitespace_chars(&chars, &mut index);
+        if index >= chars.len() || chars[index] != ':' {
+            return None;
+        }
+        index += 1;
+        skip_whitespace_chars(&chars, &mut index);
+        if key == "version" && index < chars.len() && chars[index] as u32 == 34 {
+            return parse_json_string_chars(&chars, &mut index);
+        }
+        if index < chars.len() && chars[index] == '{' {
+            let _ = parse_matching_object_chars(&chars, &mut index);
+        } else if index < chars.len() && chars[index] as u32 == 34 {
+            let _ = parse_json_string_chars(&chars, &mut index);
+        } else {
+            while index < chars.len() && chars[index] != ',' && chars[index] != '}' {
+                index += 1;
+            }
+        }
+    }
+    None
+}
+
+fn parse_matching_object_chars(chars: &[char], index: &mut usize) -> Option<String> {
+    if *index >= chars.len() || chars[*index] != '{' {
+        return None;
+    }
+    let start = *index;
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while *index < chars.len() {
+        let ch = chars[*index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch as u32 == 34 {
+                in_string = false;
+            }
+        } else if ch as u32 == 34 {
+            in_string = true;
+        } else if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+            if depth == 0 {
+                *index += 1;
+                return Some(chars[start..*index].iter().collect());
+            }
+        }
+        *index += 1;
+    }
+    None
+}
+
+fn parse_json_string_chars(chars: &[char], index: &mut usize) -> Option<String> {
+    if *index >= chars.len() || chars[*index] != '"' {
+        return None;
+    }
+    *index += 1;
+    let mut value = String::new();
+    while *index < chars.len() {
+        if chars[*index] == '"' {
+            *index += 1;
+            return Some(value);
+        }
+        value.push(chars[*index]);
+        *index += 1;
+    }
+    None
+}
+
+fn skip_whitespace_chars(chars: &[char], index: &mut usize) {
+    while *index < chars.len() && chars[*index].is_whitespace() {
+        *index += 1;
     }
 }
 
