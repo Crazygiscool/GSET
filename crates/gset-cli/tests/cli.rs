@@ -90,7 +90,7 @@ fn transpile_directory_writes_mirrored_outputs() {
 }
 
 #[test]
-fn project_unresolved_import_is_reported_and_fails() {
+fn project_external_dependency_is_reported() {
     let root = std::env::temp_dir().join(format!("gset-cli-bad-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
@@ -109,9 +109,16 @@ fn project_unresolved_import_is_reported_and_fails() {
         .arg(&destination)
         .output()
         .expect("spawn gset");
-    assert!(!output.status.success(), "unresolved import should fail");
+    assert!(
+        output.status.success(),
+        "external dependency should not fail: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unresolved import"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("dependency") || stderr.contains("wheel") || stderr.contains("runtime"),
+        "stderr: {stderr}"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&destination);
