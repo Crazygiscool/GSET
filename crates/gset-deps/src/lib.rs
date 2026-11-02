@@ -364,25 +364,30 @@ pub enum Ecosystem {
 pub struct DependencyManifest {
     pub ecosystem: Ecosystem,
     pub path: std::path::PathBuf,
+    pub rank: usize,
 }
 
-const MANIFEST_FILES: &[(&str, Ecosystem, &str)] = &[
-    ("requirements.txt", Ecosystem::Pip, "requirements"),
-    ("pyproject.toml", Ecosystem::Pip, "pyproject"),
-    ("package.json", Ecosystem::Npm, "package"),
-    ("package-lock.json", Ecosystem::Npm, "lock"),
-    ("Cargo.toml", Ecosystem::Cargo, "manifest"),
-    ("Cargo.lock", Ecosystem::Cargo, "lock"),
-    ("pom.xml", Ecosystem::Maven, "maven"),
-    ("go.mod", Ecosystem::Go, "module"),
-    ("go.sum", Ecosystem::Go, "sum"),
+const MANIFEST_FILES: &[(&str, Ecosystem, usize)] = &[
+    ("requirements.txt", Ecosystem::Pip, 0),
+    ("pyproject.toml", Ecosystem::Pip, 1),
+    ("package-lock.json", Ecosystem::Npm, 0),
+    ("package.json", Ecosystem::Npm, 1),
+    ("Cargo.lock", Ecosystem::Cargo, 0),
+    ("Cargo.toml", Ecosystem::Cargo, 1),
+    ("pom.xml", Ecosystem::Maven, 0),
+    ("go.sum", Ecosystem::Go, 0),
+    ("go.mod", Ecosystem::Go, 1),
 ];
 
 /// Discovers recognised dependency manifests beneath `root`.
 pub fn discover_manifests(root: &std::path::Path) -> std::io::Result<Vec<DependencyManifest>> {
     let mut result = Vec::new();
     discover_manifests_into(root, root, &mut result)?;
-    result.sort_by(|left, right| left.path.cmp(&right.path));
+    result.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then_with(|| left.path.cmp(&right.path))
+    });
     Ok(result)
 }
 
@@ -403,13 +408,14 @@ fn discover_manifests_into(
             discover_manifests_into(root, &path, out)?;
         } else if entry.file_type()?.is_file() {
             if let Some(name) = entry.file_name().to_str() {
-                if let Some((_, ecosystem, _)) = MANIFEST_FILES
+                if let Some((_, ecosystem, rank)) = MANIFEST_FILES
                     .iter()
                     .find(|(candidate, _, _)| *candidate == name)
                 {
                     out.push(DependencyManifest {
                         ecosystem: ecosystem.clone(),
                         path,
+                        rank: *rank,
                     });
                 }
             }
