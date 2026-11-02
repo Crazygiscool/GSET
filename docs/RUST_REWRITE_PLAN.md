@@ -1,6 +1,6 @@
 # Rust Rewrite Plan
 
-Status: **approved, in progress** — branch `feat/rust-rewrite`
+Status: **approved, in progress** — `main` now carries the Rust workspace; M0-M2 complete, M3 in progress, M4-M6 pending.
 Decision date: 2026-10-02
 
 GSET is being rewritten from Go to Rust, and simultaneously redesigned from a
@@ -167,8 +167,7 @@ five languages, which guaranteed every generated `.go` file failed `gofmt`.
 
 ## 4. Milestones
 
-Go is **frozen and in-tree** as a read-only oracle until M6. Every Rust commit
-is purely additive until the deletion commit.
+Go has been deleted in favor of the Rust workspace; historical M6 cutover notes below describe the completed asset migration shape.
 
 ### M0 — Baseline & scaffolding
 
@@ -330,16 +329,24 @@ an f-string is detected by an `interpolation` child.
 
 ### M3 — Frontend breadth
 
-Go, Java, Ruby, then C/C++ and Rust. Each is a grammar dependency plus a lowering
-pass.
+Status: **in progress**. Go, Java, and Ruby frontends exist; C and C++ now lower
+basic statements, expressions, and control flow; Rust lowers the same core subset
+with tail expressions becoming returns. Full lowering parity is still pending per
+language.
+
+Each new language remains a grammar dependency plus a lowering pass.
 
 ### M4 — Local project graph
+
+Status: **not started**.
 
 Multi-file and multi-directory projects, `--dep-path` search roots,
 package-qualified imports, workspace roots, cycle detection, parallel lowering
 via `rayon`, content-hash caching.
 
 ### M5 — Ecosystem dependency resolution
+
+Status: **not started**.
 
 pip, npm, Cargo, Maven, Go modules.
 
@@ -355,6 +362,8 @@ pip, npm, Cargo, Maven, Go modules.
   inlining of binaries.
 
 ### M6 — Cutover
+
+Status: **substantially complete** for source/build; release asset names, installers, and docs still need final consistency review.
 
 1. Rewrite CI (`test.yml`, `release.yml`) for Rust.
 2. Preserve release asset names exactly as `gset-$OS-$ARCH.tar.gz` / `.zip`.

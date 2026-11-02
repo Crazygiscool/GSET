@@ -1,8 +1,7 @@
 use crate::Frontend;
 use gset_ir::{
     BinaryOp, Block, ComparisonOp, Diagnostic, Else, Expr, ExprKind, Function, Item, LangId,
-    Literal, LogicalOp, Lowered, Module, Name, Path, Pattern, SourceId, SourceMap, Span, Stmt,
-    UnaryOp,
+    Literal, LogicalOp, Lowered, Module, Name, Pattern, SourceId, SourceMap, Span, Stmt,
 };
 use std::sync::Arc;
 

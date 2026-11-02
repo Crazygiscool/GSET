@@ -22,6 +22,7 @@ gset-frontend = { workspace = true }
 gset-backend = { workspace = true }
 gset-semantic = { workspace = true }
 gset-deps = { workspace = true }
+rayon = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

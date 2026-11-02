@@ -41,11 +41,14 @@ struct Cli {
 enum Command {
     /// Transpile a source file and print the result to stdout
     Transpile {
-        /// Source file to transpile
+        /// Source file or project directory to transpile
         path: PathBuf,
         /// Target language to emit
         #[arg(long, short = 't', visible_alias = "target", default_value = "go")]
         to: String,
+        /// Additional search roots for resolving project modules
+        #[arg(long = "dep-path", value_name = "PATH")]
+        dep_paths: Vec<PathBuf>,
         /// Source language, overriding the one inferred from the extension
         #[arg(long, short = 'f')]
         from: Option<String>,
@@ -81,10 +84,18 @@ fn main() -> ExitCode {
         Command::Transpile {
             path,
             to,
+            dep_paths,
             from,
             output,
             verbose,
-        } => transpile_command(&path, &to, from.as_deref(), output.as_deref(), verbose),
+        } => transpile_command(
+            &path,
+            &to,
+            from.as_deref(),
+            &dep_paths,
+            output.as_deref(),
+            verbose,
+        ),
         Command::Run {
             path,
             to,
@@ -98,13 +109,294 @@ fn main() -> ExitCode {
     }
 }
 
+fn transpile_directory(
+    root: &Path,
+    target: &str,
+    from: Option<&str>,
+    dep_paths: &[PathBuf],
+    destination: Option<&Path>,
+    verbose: bool,
+) -> ExitCode {
+    let mut all_roots = Vec::new();
+    all_roots.push(root.to_path_buf());
+    all_roots.extend(dep_paths.iter().cloned());
+    let sources = match gset_deps::discover_sources(root) {
+        Ok(sources) => sources,
+        Err(error) => {
+            eprintln!("gset: cannot read {}: {error}", root.display());
+            return ExitCode::from(1);
+        }
+    };
+
+    if sources.is_empty() {
+        eprintln!("gset: no source files found in {}", root.display());
+        return ExitCode::from(2);
+    }
+
+    let mut search_sources = sources.clone();
+    for dep_root in dep_paths {
+        if let Ok(extra) = gset_deps::discover_sources(dep_root) {
+            for path in extra {
+                if !search_sources.contains(&path) {
+                    search_sources.push(path);
+                }
+            }
+        } else {
+            eprintln!("gset: cannot read dependency root {}", dep_root.display());
+        }
+    }
+    search_sources.sort();
+    let source_roots: std::collections::BTreeMap<PathBuf, PathBuf> = search_sources
+        .iter()
+        .map(|source| {
+            let owner = all_roots
+                .iter()
+                .rev()
+                .find(|candidate| source.starts_with(candidate))
+                .cloned()
+                .unwrap_or_else(|| root.to_path_buf());
+            (source.clone(), owner)
+        })
+        .collect();
+
+    use rayon::prelude::*;
+
+    let mut project_failed = false;
+    let lowered: Vec<Result<(PathBuf, String, gset_ir::Lowered), ()>> = search_sources
+        .par_iter()
+        .map(|source| {
+            let text = match std::fs::read_to_string(source) {
+                Ok(text) => text,
+                Err(error) => {
+                    eprintln!("gset: cannot read {}: {error}", source.display());
+                    return Err(());
+                }
+            };
+            let frontend = match from {
+                Some(language) => gset_frontend::frontend_by_name(language),
+                None => gset_frontend::frontend_for_path(source),
+            };
+            let Some(frontend) = frontend else {
+                eprintln!(
+                    "gset: {}: no frontend for this source; supported files only",
+                    source.display()
+                );
+                return Err(());
+            };
+            let lowered = frontend.lower(&source.to_string_lossy(), &text);
+            for diagnostic in lowered.diagnostics.iter() {
+                eprintln!(
+                    "gset: {}: {}",
+                    source.display(),
+                    diagnostic.render_one_line(&lowered.source_map)
+                );
+                if diagnostic.severity.is_error() {
+                    eprintln!("gset: {}", source.display());
+                }
+            }
+            Ok((source.clone(), text, lowered))
+        })
+        .collect();
+
+    let mut lowered_sources: Vec<(PathBuf, String, gset_ir::Lowered)> = Vec::new();
+    let mut module_names: std::collections::BTreeMap<String, PathBuf> =
+        std::collections::BTreeMap::new();
+    for result in lowered {
+        match result {
+            Ok((source, text, lowered)) => {
+                let owner = source_roots
+                    .get(&source)
+                    .cloned()
+                    .unwrap_or_else(|| root.to_path_buf());
+                module_names.insert(module_name_for(&owner, &source), source.clone());
+                lowered_sources.push((source, text, lowered));
+            }
+            Err(()) => project_failed = true,
+        }
+    }
+
+    let mut graph = gset_deps::ModuleGraph::new();
+    for (id, path) in &module_names {
+        graph.add_module(gset_deps::ModuleId(id.clone()), path.clone());
+    }
+    for (source, _text, lowered) in &mut lowered_sources {
+        if let Some(module) = &mut lowered.module {
+            let owner = source_roots
+                .get(source)
+                .cloned()
+                .unwrap_or_else(|| root.to_path_buf());
+            let from_id = gset_deps::ModuleId(module_name_for(&owner, source));
+            for item in &mut module.items {
+                if let gset_ir::Item::Import(import) = item {
+                    let name = import
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.to_string())
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    if module_names.contains_key(&name) {
+                        import.resolution = Some(gset_ir::ModuleSource::LocalPath {
+                            relative: name.clone(),
+                        });
+                        if let Err(error) =
+                            graph.add_dependency(&from_id, &gset_deps::ModuleId(name.clone()))
+                        {
+                            eprintln!("gset: {source:?}: import cycle: {error:?}");
+                            project_failed = true;
+                        }
+                    } else if !name.is_empty() {
+                        eprintln!("gset: {}: unresolved import `{name}`", source.display());
+                        project_failed = true;
+                    }
+                }
+            }
+        }
+    }
+    if let Err(error) = graph.topological_order() {
+        eprintln!("gset: project contains an import cycle: {error:?}");
+        project_failed = true;
+    }
+
+    let mut project_modules: Vec<gset_ir::Module> = lowered_sources
+        .iter()
+        .filter_map(|(_, _, lowered)| lowered.module.clone())
+        .collect();
+    let project_diagnostics = gset_semantic::infer_project(&mut project_modules);
+    if !project_diagnostics.is_empty() {
+        eprintln!("gset: project inference:");
+        for diagnostic in project_diagnostics.iter() {
+            eprintln!("  {:?}: {}", diagnostic.severity, diagnostic.message);
+        }
+    }
+
+    let content_hash = project_content_hash(root, target, from, &sources);
+    let output_root = destination
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("gset.out"));
+    if content_hash_matches(&output_root, content_hash) {
+        eprintln!("gset: project outputs up to date");
+        return ExitCode::SUCCESS;
+    }
+
+    let extension = TargetId::from_name(target)
+        .map(|id| id.extension())
+        .unwrap_or("txt");
+
+    let mut overall_failed = project_failed;
+    for source in &sources {
+        let text = match std::fs::read_to_string(source) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("gset: cannot read {}: {error}", source.display());
+                overall_failed = true;
+                continue;
+            }
+        };
+        let output = match transpile(&source.to_string_lossy(), &text, from, target) {
+            Ok(output) => output,
+            Err(error) => {
+                eprintln!("gset: {}: {error}", source.display());
+                overall_failed = true;
+                continue;
+            }
+        };
+        eprintln!("gset: {}", source.display());
+        report(&output, verbose);
+        if output.failed {
+            overall_failed = true;
+        }
+
+        let relative = source.strip_prefix(root).unwrap_or(source);
+        let mut destination = output_root.join(relative);
+        destination.set_extension(extension);
+        if let Some(parent) = destination.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            eprintln!("gset: cannot create {}: {error}", parent.display());
+            overall_failed = true;
+            continue;
+        }
+        if let Err(error) = std::fs::write(&destination, &output.text) {
+            eprintln!("gset: cannot write {}: {error}", destination.display());
+            overall_failed = true;
+            continue;
+        }
+    }
+
+    if overall_failed {
+        ExitCode::from(1)
+    } else {
+        write_content_hash(&output_root, content_hash);
+        ExitCode::SUCCESS
+    }
+}
+
+fn module_name_for(root: &Path, source: &Path) -> String {
+    let relative = source.strip_prefix(root).unwrap_or(source);
+    let mut parts: Vec<String> = Vec::new();
+    for component in relative.components() {
+        if let std::path::Component::Normal(name) = component {
+            if let Some(value) = name.to_str() {
+                parts.push(value.to_string());
+            }
+        }
+    }
+    let Some(last) = parts.pop() else {
+        return String::new();
+    };
+    let stem = last
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(last.as_str());
+    if stem == "__init__" || stem == "index" {
+        return parts.join(".");
+    }
+    if parts.is_empty() {
+        stem.to_string()
+    } else {
+        parts.push(stem.to_string());
+        parts.join(".")
+    }
+}
+
+fn project_content_hash(root: &Path, target: &str, from: Option<&str>, sources: &[PathBuf]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    root.hash(&mut hasher);
+    target.hash(&mut hasher);
+    from.hash(&mut hasher);
+    for source in sources {
+        source.hash(&mut hasher);
+        if let Ok(text) = std::fs::read_to_string(source) {
+            text.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+fn content_hash_matches(root: &Path, hash: u64) -> bool {
+    let path = root.join(".gsetcache");
+    std::fs::read_to_string(&path)
+        .map(|value| value.trim() == hash.to_string())
+        .unwrap_or(false)
+}
+
+fn write_content_hash(root: &Path, hash: u64) {
+    let _ = std::fs::write(root.join(".gsetcache"), hash.to_string());
+}
+
 fn transpile_command(
     path: &Path,
     target: &str,
     from: Option<&str>,
+    dep_paths: &[PathBuf],
     destination: Option<&Path>,
     verbose: bool,
 ) -> ExitCode {
+    if path.is_dir() {
+        return transpile_directory(path, target, from, dep_paths, destination, verbose);
+    }
     let output = match load(path, target, from) {
         Ok(output) => output,
         Err(code) => return code,

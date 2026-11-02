@@ -1083,3 +1083,16 @@ fn map_key_type(ty: &Type) -> Type {
         _ => Type::UNKNOWN,
     }
 }
+
+/// Infers every module in a project independently.
+///
+/// This is the multi-module entry point for `M4`. It preserves the existing
+/// single-module behaviour first so a project can be lowered and checked before
+/// cross-module import resolution is available.
+pub fn infer_project(modules: &mut [Module]) -> gset_ir::DiagnosticBag {
+    let mut diagnostics = gset_ir::DiagnosticBag::new();
+    for module in modules {
+        diagnostics.extend(infer(module));
+    }
+    diagnostics
+}

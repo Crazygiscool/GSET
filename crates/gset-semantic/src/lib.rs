@@ -36,4 +36,4 @@
 
 mod infer;
 
-pub use infer::infer;
+pub use infer::{infer, infer_project};

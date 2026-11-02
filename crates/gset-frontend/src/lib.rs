@@ -43,6 +43,13 @@ pub mod ruby;
 #[cfg(feature = "typescript")]
 pub mod typescript;
 
+#[cfg(feature = "c")]
+pub mod c;
+#[cfg(feature = "cpp")]
+pub mod cpp;
+#[cfg(feature = "rust")]
+pub mod rust;
+
 /// Lowers one source language into the IR.
 ///
 /// Implemented per language. The trait exists so `gset-cli` can select a
@@ -76,7 +83,10 @@ pub trait Frontend {
     feature = "typescript",
     feature = "go",
     feature = "java",
-    feature = "ruby"
+    feature = "ruby",
+    feature = "c",
+    feature = "cpp",
+    feature = "rust"
 ))]
 pub fn frontends() -> Vec<Box<dyn Frontend>> {
     #[cfg(feature = "python")]
@@ -101,6 +111,18 @@ pub fn frontends() -> Vec<Box<dyn Frontend>> {
     let ruby = Some(Box::new(ruby::Ruby) as Box<dyn Frontend>);
     #[cfg(not(feature = "ruby"))]
     let ruby: Option<Box<dyn Frontend>> = None;
+    #[cfg(feature = "c")]
+    let c = Some(Box::new(c::C) as Box<dyn Frontend>);
+    #[cfg(not(feature = "c"))]
+    let c: Option<Box<dyn Frontend>> = None;
+    #[cfg(feature = "cpp")]
+    let cpp = Some(Box::new(cpp::Cpp) as Box<dyn Frontend>);
+    #[cfg(not(feature = "cpp"))]
+    let cpp: Option<Box<dyn Frontend>> = None;
+    #[cfg(feature = "rust")]
+    let rust = Some(Box::new(rust::Rust) as Box<dyn Frontend>);
+    #[cfg(not(feature = "rust"))]
+    let rust: Option<Box<dyn Frontend>> = None;
     #[cfg(not(feature = "typescript"))]
     let ts: Option<Box<dyn Frontend>> = None;
     let mut result = Vec::new();
@@ -122,6 +144,15 @@ pub fn frontends() -> Vec<Box<dyn Frontend>> {
     if let Some(frontend) = ruby {
         result.push(frontend);
     }
+    if let Some(frontend) = c {
+        result.push(frontend);
+    }
+    if let Some(frontend) = cpp {
+        result.push(frontend);
+    }
+    if let Some(frontend) = rust {
+        result.push(frontend);
+    }
     result
 }
 
@@ -131,7 +162,12 @@ pub fn frontends() -> Vec<Box<dyn Frontend>> {
     feature = "python",
     feature = "javascript",
     feature = "typescript",
-    feature = "go"
+    feature = "go",
+    feature = "java",
+    feature = "ruby",
+    feature = "c",
+    feature = "cpp",
+    feature = "rust"
 )))]
 pub fn frontends() -> Vec<Box<dyn Frontend>> {
     Vec::new()

@@ -50,6 +50,12 @@ impl LangId {
     pub const JAVA: LangId = LangId(4);
     /// Ruby.
     pub const RUBY: LangId = LangId(5);
+    /// C.
+    pub const C: LangId = LangId(6);
+    /// C++.
+    pub const CPP: LangId = LangId(7);
+    /// Rust source language (distinct from the implementation language).
+    pub const RUST: LangId = LangId(8);
 
     /// Wraps a raw identifier.
     pub const fn from_raw(raw: u16) -> LangId {

@@ -10,17 +10,15 @@ authors.workspace = true
 
 [features]
 default = ["python", "javascript", "typescript"]
-# One feature per source language.
-# One feature per source language. Each grammar is generated C and costs
-# seconds to compile, so a language that is not being used should not be built.
-# This is what makes the plan's claim true: a build that enables only the
-# languages it needs never compiles the rest.
 python = ["dep:tree-sitter-python"]
 javascript = ["dep:tree-sitter-javascript"]
 typescript = ["dep:tree-sitter-typescript"]
 go = ["dep:tree-sitter-go"]
 java = ["dep:tree-sitter-java"]
 ruby = ["dep:tree-sitter-ruby"]
+c = ["dep:tree-sitter-c"]
+cpp = ["dep:tree-sitter-cpp"]
+rust = ["dep:tree-sitter-rust"]
 
 [dependencies]
 gset-ir = { workspace = true }
@@ -31,4 +29,7 @@ tree-sitter-typescript = { version = "0.23", optional = true }
 tree-sitter-go = { version = "0.25", optional = true }
 tree-sitter-java = { version = "0.23", optional = true }
 tree-sitter-ruby = { version = "0.23", optional = true }
+tree-sitter-c = { version = "0.24", optional = true }
+tree-sitter-cpp = { version = "0.23", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
 thiserror = { workspace = true }
