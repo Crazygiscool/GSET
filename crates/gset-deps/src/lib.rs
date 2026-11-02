@@ -523,8 +523,10 @@ pub fn declared_dependency_versions(
         }
         Ecosystem::Cargo => {
             if let Ok(value) = toml::from_str::<toml::Value>(text) {
+                let mut found = false;
                 for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
                     if let Some(table) = value.get(key).and_then(toml::Value::as_table) {
+                        found = true;
                         for (name, version) in table {
                             let version = if let toml::Value::String(value) = version {
                                 Some(value.clone())
@@ -537,6 +539,19 @@ pub fn declared_dependency_versions(
                                 None
                             };
                             result.push((name.clone(), version));
+                        }
+                    }
+                }
+                if !found {
+                    if let Some(packages) = value.get("package").and_then(toml::Value::as_array) {
+                        for package in packages {
+                            if let Some(table) = package.as_table() {
+                                let name = table.get("name").and_then(toml::Value::as_str);
+                                let version = table.get("version").and_then(toml::Value::as_str);
+                                if let Some(name) = name {
+                                    result.push((name.to_string(), version.map(str::to_string)));
+                                }
+                            }
                         }
                     }
                 }
