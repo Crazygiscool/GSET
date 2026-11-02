@@ -212,3 +212,29 @@ fn project_cache_is_reused_until_source_changes() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&destination);
 }
+
+
+#[test]
+fn project_pinned_dependency_is_surfaced() {
+    let root = std::env::temp_dir().join(format!("gset-cli-pinned-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("requirements.txt"), "requests==2.0\n").unwrap();
+    std::fs::write(root.join("main.py"), "import requests\nprint(requests)\n").unwrap();
+
+    let destination = std::env::temp_dir().join(format!("gset-cli-pinned-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&destination);
+    let output = Command::new(env!("CARGO_BIN_EXE_gset"))
+        .arg("transpile")
+        .arg(&root)
+        .args(["--to", "python", "-o"])
+        .arg(&destination)
+        .output()
+        .expect("spawn gset");
+    assert!(output.status.success(), "pinned dependency should not fail: {}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("locked remote dependency") || stderr.contains("pins"), "stderr: {stderr}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&destination);
+}
