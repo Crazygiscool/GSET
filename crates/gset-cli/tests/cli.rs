@@ -52,3 +52,97 @@ fn transpile_writes_to_a_file_with_output() {
 
     let _ = std::fs::remove_file(&destination);
 }
+
+
+#[test]
+fn transpile_directory_writes_mirrored_outputs() {
+    let root = std::env::temp_dir().join(format!("gset-cli-dir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("a.py"),
+        "def value():\n    return 1\n\nprint(value())\n",
+    )
+    .unwrap();
+
+    let destination = std::env::temp_dir().join(format!("gset-cli-dir-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&destination);
+    let output = Command::new(env!("CARGO_BIN_EXE_gset"))
+        .arg("transpile")
+        .arg(&root)
+        .args(["--to", "python", "-o"])
+        .arg(&destination)
+        .output()
+        .expect("spawn gset");
+    assert!(
+        output.status.success(),
+        "transpile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        destination.join("a.py").is_file(),
+        "expected mirrored Python file"
+    );
+    let generated = std::fs::read_to_string(destination.join("a.py")).unwrap();
+    assert!(generated.contains("def value"));
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&destination);
+}
+
+#[test]
+fn project_unresolved_import_is_reported_and_fails() {
+    let root = std::env::temp_dir().join(format!("gset-cli-bad-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("main.py"), "from missing import foo\nprint(foo())\n").unwrap();
+
+    let destination = std::env::temp_dir().join(format!("gset-cli-bad-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&destination);
+    let output = Command::new(env!("CARGO_BIN_EXE_gset"))
+        .arg("transpile")
+        .arg(&root)
+        .args(["--to", "python", "-o"])
+        .arg(&destination)
+        .output()
+        .expect("spawn gset");
+    assert!(!output.status.success(), "unresolved import should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unresolved import"), "stderr: {stderr}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&destination);
+}
+
+#[test]
+fn project_import_cycle_is_detected() {
+    let root = std::env::temp_dir().join(format!("gset-cli-cycle-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("a.py"),
+        "from b import value\nprint(value)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("b.py"),
+        "from a import value\nprint(value)\n",
+    )
+    .unwrap();
+
+    let destination = std::env::temp_dir().join(format!("gset-cli-cycle-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&destination);
+    let output = Command::new(env!("CARGO_BIN_EXE_gset"))
+        .arg("transpile")
+        .arg(&root)
+        .args(["--to", "python", "-o"])
+        .arg(&destination)
+        .output()
+        .expect("spawn gset");
+    assert!(!output.status.success(), "cycle should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("import cycle") || stderr.contains("cycle"), "stderr: {stderr}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&destination);
+}
