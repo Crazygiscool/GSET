@@ -213,7 +213,6 @@ fn project_cache_is_reused_until_source_changes() {
     let _ = std::fs::remove_dir_all(&destination);
 }
 
-
 #[test]
 fn project_pinned_dependency_is_surfaced() {
     let root = std::env::temp_dir().join(format!("gset-cli-pinned-{}", std::process::id()));
@@ -222,7 +221,8 @@ fn project_pinned_dependency_is_surfaced() {
     std::fs::write(root.join("requirements.txt"), "requests==2.0\n").unwrap();
     std::fs::write(root.join("main.py"), "import requests\nprint(requests)\n").unwrap();
 
-    let destination = std::env::temp_dir().join(format!("gset-cli-pinned-out-{}", std::process::id()));
+    let destination =
+        std::env::temp_dir().join(format!("gset-cli-pinned-out-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&destination);
     let output = Command::new(env!("CARGO_BIN_EXE_gset"))
         .arg("transpile")
@@ -231,14 +231,20 @@ fn project_pinned_dependency_is_surfaced() {
         .arg(&destination)
         .output()
         .expect("spawn gset");
-    assert!(output.status.success(), "pinned dependency should not fail: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "pinned dependency should not fail: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("locked remote dependency") || stderr.contains("pins"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("locked remote dependency") || stderr.contains("pins"),
+        "stderr: {stderr}"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&destination);
 }
-
 
 #[test]
 fn js_project_import_passes_python_syntax_check() {
@@ -251,7 +257,8 @@ fn js_project_import_passes_python_syntax_check() {
     )
     .unwrap();
 
-    let destination = std::env::temp_dir().join(format!("gset-cli-jsproj-out-{}", std::process::id()));
+    let destination =
+        std::env::temp_dir().join(format!("gset-cli-jsproj-out-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&destination);
     let output = Command::new(env!("CARGO_BIN_EXE_gset"))
         .arg("transpile")
@@ -260,10 +267,91 @@ fn js_project_import_passes_python_syntax_check() {
         .arg(&destination)
         .output()
         .expect("spawn gset");
-    assert!(output.status.success(), "transpile failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "transpile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let generated = std::fs::read_to_string(destination.join("main.py")).unwrap();
     std::fs::write(destination.join("main.py"), generated).unwrap();
+    let syntax = Command::new("python3")
+        .args(["-m", "py_compile", "main.py"])
+        .current_dir(&destination)
+        .status()
+        .expect("python3");
+    assert!(syntax.success(), "generated Python should compile");
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&destination);
+}
+
+#[test]
+fn ts_project_import_passes_python_syntax_check() {
+    let root = std::env::temp_dir().join(format!("gset-cli-tsproj-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("main.ts"),
+        "import os from \"fs\";\nconsole.log(os);\n",
+    )
+    .unwrap();
+
+    let destination =
+        std::env::temp_dir().join(format!("gset-cli-tsproj-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&destination);
+    let output = Command::new(env!("CARGO_BIN_EXE_gset"))
+        .arg("transpile")
+        .arg(&root)
+        .args(["--to", "python", "-o"])
+        .arg(&destination)
+        .output()
+        .expect("spawn gset");
+    assert!(
+        output.status.success(),
+        "transpile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let syntax = Command::new("python3")
+        .args(["-m", "py_compile", "main.py"])
+        .current_dir(&destination)
+        .status()
+        .expect("python3");
+    assert!(syntax.success(), "generated Python should compile");
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&destination);
+}
+
+#[cfg(feature = "go")]
+#[test]
+fn go_project_import_passes_python_syntax_check() {
+    let root = std::env::temp_dir().join(format!("gset-cli-goproj-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("main.go"),
+        "package main\nimport \"os\"\nfunc main() { _ = os.Args }\n",
+    )
+    .unwrap();
+
+    let destination =
+        std::env::temp_dir().join(format!("gset-cli-goproj-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&destination);
+    let output = Command::new(env!("CARGO_BIN_EXE_gset"))
+        .arg("transpile")
+        .arg(&root)
+        .args(["--to", "python", "-o"])
+        .arg(&destination)
+        .output()
+        .expect("spawn gset");
+    assert!(
+        output.status.success(),
+        "transpile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     let syntax = Command::new("python3")
         .args(["-m", "py_compile", "main.py"])
         .current_dir(&destination)

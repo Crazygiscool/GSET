@@ -34,3 +34,14 @@ criterion = { workspace = true }
 [[bench]]
 name = "startup"
 harness = false
+[features]
+default = ["python", "javascript", "typescript"]
+python = ["gset-frontend/python"]
+javascript = ["gset-frontend/javascript"]
+typescript = ["gset-frontend/typescript"]
+go = ["gset-frontend/go"]
+java = ["gset-frontend/java"]
+ruby = ["gset-frontend/ruby"]
+c = ["gset-frontend/c"]
+cpp = ["gset-frontend/cpp"]
+rust = ["gset-frontend/rust"]
