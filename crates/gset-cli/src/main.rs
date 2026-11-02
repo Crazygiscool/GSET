@@ -215,7 +215,22 @@ fn transpile_directory(
         }
     }
 
-    let ecosystem = project_ecosystem(root, &search_sources);
+    let mut source_ecosystems: std::collections::BTreeMap<PathBuf, gset_deps::Ecosystem> =
+        std::collections::BTreeMap::new();
+    let mut source_declared_versions: std::collections::BTreeMap<
+        PathBuf,
+        std::collections::BTreeMap<String, Option<String>>,
+    > = std::collections::BTreeMap::new();
+    for source in &search_sources {
+        let owner = source_roots
+            .get(source)
+            .cloned()
+            .unwrap_or_else(|| root.to_path_buf());
+        let ecosystem = ecosystem_for_source(source);
+        let versions = gset_deps::manifest_dependency_versions(&owner, &ecosystem);
+        source_ecosystems.insert(source.clone(), ecosystem);
+        source_declared_versions.insert(source.clone(), versions);
+    }
 
     let mut graph = gset_deps::ModuleGraph::new();
     for (id, path) in &module_names {
@@ -248,7 +263,15 @@ fn transpile_directory(
                             project_failed = true;
                         }
                     } else if !name.is_empty() {
-                        let resolution = gset_deps::classify_import(&ecosystem, &name, None);
+                        let ecosystem = source_ecosystems
+                            .get(source)
+                            .cloned()
+                            .unwrap_or_else(|| ecosystem_for_source(source));
+                        let version = source_declared_versions
+                            .get(source)
+                            .and_then(|versions| versions.get(&name))
+                            .and_then(|version| version.as_deref());
+                        let resolution = gset_deps::classify_import(&ecosystem, &name, version);
                         match &resolution {
                             gset_ir::ModuleSource::Sdk { runtime } => {
                                 eprintln!(
@@ -261,7 +284,14 @@ fn transpile_directory(
                                 artifact,
                             } => {
                                 eprintln!(
-                                    "gset: {}: dependency `{requirement}` is {artifact};                                      provide it with the target package manager",
+                                    "gset: {}: dependency `{requirement}` is {artifact}; \
+                                     provide it with the target package manager",
+                                    source.display()
+                                );
+                            }
+                            gset_ir::ModuleSource::LockedRemote { version, .. } => {
+                                eprintln!(
+                                    "gset: {}: using `{version}` from project manifest",
                                     source.display()
                                 );
                             }
@@ -399,27 +429,13 @@ fn transpile_directory(
     }
 }
 
-fn project_ecosystem(_root: &Path, sources: &[PathBuf]) -> gset_deps::Ecosystem {
-    let extension = sources
-        .first()
-        .and_then(|source| source.extension())
-        .and_then(|ext| ext.to_str());
-    let manifest_kind = sources
-        .first()
-        .and_then(|source| source.parent())
-        .and_then(|dir| gset_deps::discover_manifests(dir).ok())
-        .and_then(|manifests| manifests.into_iter().next())
-        .map(|manifest| match manifest.ecosystem {
-            gset_deps::Ecosystem::Pip => gset_deps::Ecosystem::Pip,
-            gset_deps::Ecosystem::Npm => gset_deps::Ecosystem::Npm,
-            gset_deps::Ecosystem::Cargo => gset_deps::Ecosystem::Cargo,
-            gset_deps::Ecosystem::Maven => gset_deps::Ecosystem::Maven,
-            gset_deps::Ecosystem::Go => gset_deps::Ecosystem::Go,
-        });
-    if let Some(ecosystem) = manifest_kind {
-        return ecosystem;
-    }
-    match extension {
+fn ecosystem_for_source(path: &Path) -> gset_deps::Ecosystem {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx") => gset_deps::Ecosystem::Npm,
         Some("rs") => gset_deps::Ecosystem::Cargo,
         Some("go") => gset_deps::Ecosystem::Go,
