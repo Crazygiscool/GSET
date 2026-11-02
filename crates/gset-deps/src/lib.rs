@@ -348,3 +348,92 @@ mod resolver_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+/// Ecosystem of a dependency manifest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Ecosystem {
+    Pip,
+    Npm,
+    Cargo,
+    Maven,
+    Go,
+}
+
+/// A dependency manifest located in a project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyManifest {
+    pub ecosystem: Ecosystem,
+    pub path: std::path::PathBuf,
+}
+
+const MANIFEST_FILES: &[(&str, Ecosystem, &str)] = &[
+    ("requirements.txt", Ecosystem::Pip, "requirements"),
+    ("pyproject.toml", Ecosystem::Pip, "pyproject"),
+    ("package.json", Ecosystem::Npm, "package"),
+    ("package-lock.json", Ecosystem::Npm, "lock"),
+    ("Cargo.toml", Ecosystem::Cargo, "manifest"),
+    ("Cargo.lock", Ecosystem::Cargo, "lock"),
+    ("pom.xml", Ecosystem::Maven, "maven"),
+    ("go.mod", Ecosystem::Go, "module"),
+    ("go.sum", Ecosystem::Go, "sum"),
+];
+
+/// Discovers recognised dependency manifests beneath `root`.
+pub fn discover_manifests(root: &std::path::Path) -> std::io::Result<Vec<DependencyManifest>> {
+    let mut result = Vec::new();
+    discover_manifests_into(root, root, &mut result)?;
+    result.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(result)
+}
+
+fn discover_manifests_into(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    out: &mut Vec<DependencyManifest>,
+) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            if let Some(name) = entry.file_name().to_str() {
+                if matches!(name, "target" | "node_modules" | ".git" | "dist" | "build") {
+                    continue;
+                }
+            }
+            discover_manifests_into(root, &path, out)?;
+        } else if entry.file_type()?.is_file() {
+            if let Some(name) = entry.file_name().to_str() {
+                if let Some((_, ecosystem, _)) = MANIFEST_FILES
+                    .iter()
+                    .find(|(candidate, _, _)| *candidate == name)
+                {
+                    out.push(DependencyManifest {
+                        ecosystem: ecosystem.clone(),
+                        path,
+                    });
+                }
+            }
+        }
+    }
+    let _ = root;
+    Ok(())
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+
+    #[test]
+    fn discovers_common_manifests() {
+        let root = std::env::temp_dir().join("gset-manifest-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("requirements.txt"), "").unwrap();
+        std::fs::write(root.join("sub").join("package-lock.json"), "").unwrap();
+
+        let manifests = discover_manifests(&root).unwrap();
+        assert!(manifests.iter().any(|m| m.ecosystem == Ecosystem::Pip));
+        assert!(manifests.iter().any(|m| m.ecosystem == Ecosystem::Npm));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
