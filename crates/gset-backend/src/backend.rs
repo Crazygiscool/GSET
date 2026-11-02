@@ -78,20 +78,38 @@ pub fn emit(backend: &dyn Backend, module: &Module, source_map: &SourceMap) -> E
     }
     for item in &module.items {
         if let gset_ir::Item::Import(import) = item {
-            if let Some(gset_ir::ModuleSource::OpaqueForeign {
-                artifact,
-                requirement,
-            }) = &import.resolution
-            {
-                diagnostics.push(
-                    gset_ir::Diagnostic::warning(
-                        import.span,
-                        format!(
-                            "opaque foreign dependency `{requirement}` ({artifact}) must be supplied                              by the target package manager; its import is emitted as a passthrough"
-                        ),
-                    )
-                    .with_code("gset-backend-import"),
-                );
+            match &import.resolution {
+                Some(gset_ir::ModuleSource::OpaqueForeign {
+                    artifact,
+                    requirement,
+                }) => {
+                    diagnostics.push(
+                        gset_ir::Diagnostic::warning(
+                            import.span,
+                            format!(
+                                "opaque foreign dependency `{requirement}` ({artifact}) must be supplied \
+                                 by the target package manager; its import is emitted as a passthrough"
+                            ),
+                        )
+                        .with_code("gset-backend-import"),
+                    );
+                }
+                Some(gset_ir::ModuleSource::LockedRemote {
+                    version,
+                    source_available: false,
+                }) => {
+                    diagnostics.push(
+                        gset_ir::Diagnostic::warning(
+                            import.span,
+                            format!(
+                                "locked remote dependency pins `{version}`, but source is unavailable; \
+                                 its import is emitted as a passthrough"
+                            ),
+                        )
+                        .with_code("gset-backend-import"),
+                    );
+                }
+                _ => {}
             }
         }
     }
