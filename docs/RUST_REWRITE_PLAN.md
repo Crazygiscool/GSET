@@ -329,10 +329,11 @@ an f-string is detected by an `interpolation` child.
 
 ### M3 — Frontend breadth
 
-Status: **in progress**. Go, Java, and Ruby frontends exist; C and C++ now lower
-basic statements, expressions, and control flow; Rust lowers the same core subset
-with tail expressions becoming returns. Full lowering parity is still pending per
-language.
+Status: **complete at registration level**: Python, JavaScript, TypeScript, Go,
+Java, Ruby, C, C++, and Rust source-language frontends are wired behind feature
+gates and registered in `frontends()`. Across them, basic statements, expressions,
+imports, and control-flow constructs now lower, while construct-by-construct
+parity remains intentionally incremental in focused slices.
 
 Each new language remains a grammar dependency plus a lowering pass.
 
