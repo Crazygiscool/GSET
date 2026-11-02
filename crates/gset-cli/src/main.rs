@@ -248,7 +248,7 @@ fn transpile_directory(
                             project_failed = true;
                         }
                     } else if !name.is_empty() {
-                        let resolution = gset_deps::classify_import(&ecosystem, &name);
+                        let resolution = gset_deps::classify_import(&ecosystem, &name, None);
                         match &resolution {
                             gset_ir::ModuleSource::Sdk { runtime } => {
                                 eprintln!(

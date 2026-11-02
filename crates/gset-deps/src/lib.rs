@@ -444,17 +444,212 @@ mod manifest_tests {
 /// conservative classifier gives M5 a concrete and testable path today: names
 /// known to be shipped with the target runtime are `Sdk`, while everything else
 /// remains `OpaqueForeign` and names the target-side package manager.
-pub fn classify_import(ecosystem: &Ecosystem, package: &str) -> gset_ir::ModuleSource {
+pub fn classify_import(
+    ecosystem: &Ecosystem,
+    package: &str,
+    version: Option<&str>,
+) -> gset_ir::ModuleSource {
     if is_sdk_package(ecosystem, package) {
-        gset_ir::ModuleSource::Sdk {
+        return gset_ir::ModuleSource::Sdk {
             runtime: ecosystem.runtime_name().to_string(),
+        };
+    }
+    if let Some(version) = version {
+        return gset_ir::ModuleSource::LockedRemote {
+            version: version.to_string(),
+            source_available: false,
+        };
+    }
+    gset_ir::ModuleSource::OpaqueForeign {
+        artifact: ecosystem.artifact_name().to_string(),
+        requirement: package.to_string(),
+    }
+}
+
+/// Returns declared dependencies with their version strings when available.
+pub fn declared_dependency_versions(
+    ecosystem: &Ecosystem,
+    text: &str,
+) -> Vec<(String, Option<String>)> {
+    let mut result = Vec::new();
+    match ecosystem {
+        Ecosystem::Pip => {
+            for line in text.lines() {
+                let line = line.split('#').next().unwrap_or("").trim();
+                if line.is_empty() || line.starts_with("--") || line.starts_with("-") {
+                    continue;
+                }
+                let token = line.split_whitespace().next().unwrap_or("");
+                let name = token
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                    .collect::<String>();
+                let version = token[name.len()..].trim();
+                if !name.is_empty() {
+                    result.push((
+                        name,
+                        if version.is_empty() {
+                            None
+                        } else {
+                            Some(version.to_string())
+                        },
+                    ));
+                }
+            }
         }
-    } else {
-        gset_ir::ModuleSource::OpaqueForeign {
-            artifact: ecosystem.artifact_name().to_string(),
-            requirement: package.to_string(),
+        Ecosystem::Npm => {
+            let mut in_dependencies = false;
+            let mut depth = 0;
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if !in_dependencies {
+                    if trimmed.contains("\"dependencies\"")
+                        || trimmed.contains("\"devDependencies\"")
+                    {
+                        in_dependencies = trimmed.contains('{');
+                        depth = line.chars().filter(|c| *c == '{').count()
+                            - line.chars().filter(|c| *c == '}').count();
+                        collect_npm_versions(trimmed, &mut result);
+                    }
+                    continue;
+                }
+                depth += line.chars().filter(|c| *c == '{').count()
+                    - line.chars().filter(|c| *c == '}').count();
+                collect_npm_versions(trimmed, &mut result);
+                if depth <= 0 {
+                    in_dependencies = false;
+                }
+            }
+        }
+        Ecosystem::Cargo => {
+            if let Ok(value) = toml::from_str::<toml::Value>(text) {
+                for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                    if let Some(table) = value.get(key).and_then(toml::Value::as_table) {
+                        for (name, version) in table {
+                            let version = if let toml::Value::String(value) = version {
+                                Some(value.clone())
+                            } else if let Some(table) = version.as_table() {
+                                table
+                                    .get("version")
+                                    .and_then(toml::Value::as_str)
+                                    .map(str::to_string)
+                            } else {
+                                None
+                            };
+                            result.push((name.clone(), version));
+                        }
+                    }
+                }
+            }
+        }
+        Ecosystem::Go => {
+            let mut in_require = false;
+            for raw_line in text.lines() {
+                let line = raw_line.split("//").next().unwrap_or("").trim();
+                if line.starts_with("require (") {
+                    in_require = true;
+                    continue;
+                }
+                if in_require && line == ")" {
+                    in_require = false;
+                    continue;
+                }
+                let require = if in_require {
+                    Some(line)
+                } else if line.starts_with("require ") {
+                    Some(line.trim_start_matches("require ").trim())
+                } else {
+                    None
+                };
+                if let Some(require) = require {
+                    let mut parts = require.split_whitespace();
+                    if let (Some(package), version) = (parts.next(), parts.next()) {
+                        result.push((package.to_string(), version.map(str::to_string)));
+                    }
+                }
+            }
+        }
+        Ecosystem::Maven => {
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("<artifactId>") {
+                    if let Some(name) = rest.strip_suffix("</artifactId>") {
+                        result.push((name.trim().to_string(), None));
+                    }
+                }
+            }
         }
     }
+    dedupe_versions(&mut result);
+    result.sort_by(|left, right| left.0.cmp(&right.0));
+    result
+}
+
+pub fn manifest_dependency_versions(
+    root: &std::path::Path,
+    ecosystem: &Ecosystem,
+) -> std::collections::BTreeMap<String, Option<String>> {
+    let mut versions = std::collections::BTreeMap::new();
+    if let Ok(manifests) = discover_manifests(root) {
+        for manifest in manifests
+            .into_iter()
+            .filter(|manifest| manifest.ecosystem == *ecosystem)
+        {
+            if let Ok(text) = std::fs::read_to_string(&manifest.path) {
+                for (name, version) in declared_dependency_versions(ecosystem, &text) {
+                    versions.entry(name).or_insert(version);
+                }
+            }
+        }
+    }
+    versions
+}
+
+fn collect_npm_versions(line: &str, names: &mut Vec<(String, Option<String>)>) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '"' {
+            let start = index + 1;
+            let mut end = start;
+            while end < chars.len() && chars[end] != '"' {
+                end += 1;
+            }
+            if end < chars.len() {
+                let key = chars[start..end].iter().collect::<String>();
+                let rest = chars[end + 1..].iter().collect::<String>();
+                let rest = rest.trim_start();
+                if let Some(version) = rest.strip_prefix(':').map(str::trim) {
+                    let version = version
+                        .trim_start_matches('"')
+                        .split('"')
+                        .next()
+                        .map(trim_version)
+                        .flatten();
+                    names.push((key, version));
+                }
+                index = end + 1;
+            } else {
+                index = chars.len();
+            }
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn trim_version(version: &str) -> Option<String> {
+    let value = version.trim().trim_matches('"').trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn dedupe_versions(names: &mut Vec<(String, Option<String>)>) {
+    let mut seen = std::collections::BTreeSet::new();
+    names.retain(|(name, _)| seen.insert(name.clone()));
 }
 
 impl Ecosystem {
@@ -526,15 +721,15 @@ mod classification_tests {
     #[test]
     fn classifies_runtime_and_foreign_packages() {
         assert!(matches!(
-            classify_import(&Ecosystem::Pip, "os"),
+            classify_import(&Ecosystem::Pip, "os", None),
             gset_ir::ModuleSource::Sdk { .. }
         ));
         assert!(matches!(
-            classify_import(&Ecosystem::Pip, "requests"),
+            classify_import(&Ecosystem::Pip, "requests", None),
             gset_ir::ModuleSource::OpaqueForeign { requirement, .. } if requirement == "requests"
         ));
         assert!(matches!(
-            classify_import(&Ecosystem::Go, "fmt"),
+            classify_import(&Ecosystem::Go, "fmt", None),
             gset_ir::ModuleSource::Sdk { .. }
         ));
     }
@@ -697,5 +892,38 @@ mod dependency_tests {
 
         let cargo = declared_dependencies(&Ecosystem::Cargo, "[dependencies]\nserde = \"1\"\n");
         assert!(cargo.contains(&"serde".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod manifest_dependency_tests {
+    use super::*;
+
+    #[test]
+    fn parses_versions_from_manifests() {
+        let requirements = "requests==2.0\nos\n";
+        let deps = declared_dependency_versions(&Ecosystem::Pip, requirements);
+        assert!(
+            deps.iter()
+                .any(|(name, version)| name == "requests" && version.as_deref() == Some("==2.0"))
+        );
+
+        let package = r#"{ "dependencies": { "lodash": "^4" } }"#;
+        let npm = declared_dependency_versions(&Ecosystem::Npm, package);
+        assert!(
+            npm.iter()
+                .any(|(name, version)| name == "lodash" && version.as_deref() == Some("^4"))
+        );
+
+        let cargo =
+            declared_dependency_versions(&Ecosystem::Cargo, "[dependencies]\nserde = \"1\"\n");
+        assert!(
+            cargo
+                .iter()
+                .any(|(name, version)| name == "serde" && version.as_deref() == Some("1"))
+        );
+
+        let locked = classify_import(&Ecosystem::Pip, "requests", Some("==2.0"));
+        assert!(matches!(locked, gset_ir::ModuleSource::LockedRemote { .. }));
     }
 }
