@@ -539,3 +539,163 @@ mod classification_tests {
         ));
     }
 }
+
+/// Lists the package names directly declared by a manifest.
+pub fn declared_dependencies(ecosystem: &Ecosystem, text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    match ecosystem {
+        Ecosystem::Pip => {
+            for line in text.lines() {
+                let line = line.split('#').next().unwrap_or("").trim();
+                if line.is_empty() || line.starts_with("--") || line.starts_with("-") {
+                    continue;
+                }
+                let token = line.split_whitespace().next().unwrap_or("");
+                let name = token
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                    .collect::<String>();
+                if !name.is_empty() {
+                    names.push(name);
+                }
+            }
+        }
+        Ecosystem::Npm => {
+            let mut in_dependencies = false;
+            let mut depth = 0;
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if !in_dependencies {
+                    if trimmed.contains("\"dependencies\"")
+                        || trimmed.contains("\"devDependencies\"")
+                    {
+                        in_dependencies = trimmed.contains('{');
+                        depth = line.chars().filter(|c| *c == '{').count()
+                            - line.chars().filter(|c| *c == '}').count();
+                        collect_npm_keys(trimmed, &mut names);
+                    }
+                    continue;
+                }
+                depth += line.chars().filter(|c| *c == '{').count()
+                    - line.chars().filter(|c| *c == '}').count();
+                collect_npm_keys(trimmed, &mut names);
+                if depth <= 0 {
+                    in_dependencies = false;
+                }
+            }
+        }
+        Ecosystem::Cargo => {
+            if let Ok(value) = toml::from_str::<toml::Value>(text) {
+                for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                    if let Some(table) = value.get(key).and_then(toml::Value::as_table) {
+                        for name in table.keys() {
+                            names.push(name.clone());
+                        }
+                    }
+                }
+            }
+        }
+        Ecosystem::Go => {
+            let mut in_require = false;
+            for raw_line in text.lines() {
+                let line = raw_line.split("//").next().unwrap_or("").trim();
+                if line.starts_with("require (") {
+                    in_require = true;
+                    continue;
+                }
+                if in_require && line == ")" {
+                    in_require = false;
+                    continue;
+                }
+                let require = if in_require {
+                    Some(line)
+                } else if line.starts_with("require ") {
+                    Some(line.trim_start_matches("require ").trim())
+                } else {
+                    None
+                };
+                if let Some(require) = require {
+                    if let Some(package) = require.split_whitespace().next() {
+                        names.push(package.to_string());
+                    }
+                }
+            }
+        }
+        Ecosystem::Maven => {
+            let mut in_artifact = false;
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if in_artifact {
+                    names.push(trimmed.to_string());
+                    in_artifact = false;
+                } else if trimmed == "<artifactId>" {
+                    in_artifact = true;
+                } else if let Some(rest) = trimmed.strip_prefix("<artifactId>") {
+                    if let Some(name) = rest.strip_suffix("</artifactId>") {
+                        names.push(name.trim().to_string());
+                    }
+                }
+            }
+        }
+    }
+    dedupe(&mut names);
+    names.sort();
+    names
+}
+
+fn collect_npm_keys(line: &str, names: &mut Vec<String>) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '"' {
+            let start = index + 1;
+            let mut end = start;
+            while end < chars.len() && chars[end] != '"' {
+                end += 1;
+            }
+            if end < chars.len() {
+                let key = chars[start..end].iter().collect::<String>();
+                let rest = chars[end + 1..]
+                    .iter()
+                    .collect::<String>()
+                    .trim_start()
+                    .to_string();
+                if rest.starts_with(':') {
+                    names.push(key);
+                }
+                index = end + 1;
+            } else {
+                index = chars.len();
+            }
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn dedupe(names: &mut Vec<String>) {
+    let mut seen = std::collections::BTreeSet::new();
+    names.retain(|name| seen.insert(name.clone()));
+}
+
+#[cfg(test)]
+mod dependency_tests {
+    use super::*;
+
+    #[test]
+    fn parses_common_manifest_dependencies() {
+        let requirements = "requests>=2.0\nos\n# comment\n";
+        assert!(
+            declared_dependencies(&Ecosystem::Pip, requirements).contains(&"requests".to_string())
+        );
+        assert!(declared_dependencies(&Ecosystem::Pip, requirements).contains(&"os".to_string()));
+
+        let package = r#"{ "dependencies": { "lodash": "^4", "react": "18" } }"#;
+        let npm = declared_dependencies(&Ecosystem::Npm, package);
+        assert!(npm.contains(&"lodash".to_string()));
+        assert!(npm.contains(&"react".to_string()));
+
+        let cargo = declared_dependencies(&Ecosystem::Cargo, "[dependencies]\nserde = \"1\"\n");
+        assert!(cargo.contains(&"serde".to_string()));
+    }
+}
