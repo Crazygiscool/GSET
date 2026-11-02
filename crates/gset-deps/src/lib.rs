@@ -437,3 +437,105 @@ mod manifest_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+/// Classifies an imported package name for an ecosystem.
+///
+/// Lockfile-first resolution is the long-term source of truth, but this
+/// conservative classifier gives M5 a concrete and testable path today: names
+/// known to be shipped with the target runtime are `Sdk`, while everything else
+/// remains `OpaqueForeign` and names the target-side package manager.
+pub fn classify_import(ecosystem: &Ecosystem, package: &str) -> gset_ir::ModuleSource {
+    if is_sdk_package(ecosystem, package) {
+        gset_ir::ModuleSource::Sdk {
+            runtime: ecosystem.runtime_name().to_string(),
+        }
+    } else {
+        gset_ir::ModuleSource::OpaqueForeign {
+            artifact: ecosystem.artifact_name().to_string(),
+            requirement: package.to_string(),
+        }
+    }
+}
+
+impl Ecosystem {
+    fn runtime_name(&self) -> &'static str {
+        match self {
+            Self::Pip => "python",
+            Self::Npm => "node",
+            Self::Cargo => "rust",
+            Self::Maven => "jdk",
+            Self::Go => "go",
+        }
+    }
+
+    fn artifact_name(&self) -> &'static str {
+        match self {
+            Self::Pip => "wheel",
+            Self::Npm => "npm-package",
+            Self::Cargo => "crate",
+            Self::Maven => "jar",
+            Self::Go => "go-module",
+        }
+    }
+}
+
+fn is_sdk_package(ecosystem: &Ecosystem, package: &str) -> bool {
+    let first = package.split(['.', '/', '\\']).next().unwrap_or(package);
+    match ecosystem {
+        Ecosystem::Pip => matches!(
+            first,
+            "sys"
+                | "os"
+                | "math"
+                | "re"
+                | "json"
+                | "typing"
+                | "pathlib"
+                | "collections"
+                | "itertools"
+                | "functools"
+                | "dataclasses"
+        ),
+        Ecosystem::Npm => matches!(
+            first,
+            "fs" | "path"
+                | "http"
+                | "https"
+                | "url"
+                | "os"
+                | "util"
+                | "crypto"
+                | "events"
+                | "stream"
+                | "node:fs"
+                | "node:path"
+        ),
+        Ecosystem::Cargo => first == "std" || first == "core" || first == "alloc",
+        Ecosystem::Maven => first == "java" || first == "javax" || first == "kotlin",
+        Ecosystem::Go => matches!(
+            first,
+            "fmt" | "os" | "strings" | "math" | "encoding" | "time" | "io" | "errors" | "sort"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod classification_tests {
+    use super::*;
+
+    #[test]
+    fn classifies_runtime_and_foreign_packages() {
+        assert!(matches!(
+            classify_import(&Ecosystem::Pip, "os"),
+            gset_ir::ModuleSource::Sdk { .. }
+        ));
+        assert!(matches!(
+            classify_import(&Ecosystem::Pip, "requests"),
+            gset_ir::ModuleSource::OpaqueForeign { requirement, .. } if requirement == "requests"
+        ));
+        assert!(matches!(
+            classify_import(&Ecosystem::Go, "fmt"),
+            gset_ir::ModuleSource::Sdk { .. }
+        ));
+    }
+}
