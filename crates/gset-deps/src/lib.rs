@@ -368,15 +368,27 @@ pub struct DependencyManifest {
 }
 
 const MANIFEST_FILES: &[(&str, Ecosystem, usize)] = &[
+    ("poetry.lock", Ecosystem::Pip, 0),
+    ("uv.lock", Ecosystem::Pip, 0),
+    ("Pipfile.lock", Ecosystem::Pip, 0),
     ("requirements.txt", Ecosystem::Pip, 0),
     ("pyproject.toml", Ecosystem::Pip, 1),
+    ("setup.cfg", Ecosystem::Pip, 2),
+    ("setup.py", Ecosystem::Pip, 2),
     ("package-lock.json", Ecosystem::Npm, 0),
+    ("yarn.lock", Ecosystem::Npm, 0),
+    ("pnpm-lock.yaml", Ecosystem::Npm, 0),
     ("package.json", Ecosystem::Npm, 1),
     ("Cargo.lock", Ecosystem::Cargo, 0),
     ("Cargo.toml", Ecosystem::Cargo, 1),
     ("pom.xml", Ecosystem::Maven, 0),
+    ("gradle.lockfile", Ecosystem::Maven, 0),
+    ("build.gradle", Ecosystem::Maven, 1),
+    ("build.gradle.kts", Ecosystem::Maven, 1),
     ("go.sum", Ecosystem::Go, 0),
+    ("Gopkg.lock", Ecosystem::Go, 0),
     ("go.mod", Ecosystem::Go, 1),
+    ("Gopkg.toml", Ecosystem::Go, 1),
 ];
 
 /// Discovers recognised dependency manifests beneath `root`.
@@ -472,6 +484,179 @@ pub fn classify_import(
     }
 }
 
+/// Parses a supported Python lockfile or build manifest.
+///
+/// Returns `true` when the text was recognised and `result` was populated.
+fn parse_pip_lockfile(text: &str, result: &mut Vec<(String, Option<String>)>) -> bool {
+    let trimmed = text.trim();
+    if trimmed.starts_with('{') {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            let mut found = false;
+            for section in ["default", "develop"] {
+                if let Some(entries) = value.get(section).and_then(serde_json::Value::as_object) {
+                    for (name, spec) in entries {
+                        let version = spec
+                            .get("version")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string);
+                        if !name.is_empty() {
+                            result.push((name.clone(), version));
+                            found = true;
+                        }
+                    }
+                }
+            }
+            if found {
+                dedupe_versions(result);
+                return true;
+            }
+        }
+    }
+
+    if let Ok(value) = toml::from_str::<toml::Value>(text) {
+        let mut found = false;
+
+        if let Some(project) = value.get("project").and_then(toml::Value::as_table) {
+            if let Some(dependencies) = project.get("dependencies").and_then(toml::Value::as_array)
+            {
+                for dependency in dependencies {
+                    if let Some(requirement) = dependency.as_str() {
+                        let (name, version) = parse_pip_requirement(requirement);
+                        if !name.is_empty() {
+                            result.push((name, version));
+                            found = true;
+                        }
+                    }
+                }
+            }
+            if let Some(optional) = project
+                .get("optional-dependencies")
+                .and_then(toml::Value::as_table)
+            {
+                for (_, dependencies) in optional {
+                    if let Some(dependencies) = dependencies.as_array() {
+                        for dependency in dependencies {
+                            if let Some(requirement) = dependency.as_str() {
+                                let (name, version) = parse_pip_requirement(requirement);
+                                if !name.is_empty() {
+                                    result.push((name, version));
+                                    found = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let poetry_roots = [
+            ("tool", "poetry", "dependencies"),
+            ("tool", "poetry", "dev-dependencies"),
+        ];
+        for (first, second, third) in poetry_roots {
+            if let Some(dependencies) = value
+                .get(first)
+                .and_then(toml::Value::as_table)
+                .and_then(|table| table.get(second))
+                .and_then(toml::Value::as_table)
+                .and_then(|table| table.get(third))
+                .and_then(toml::Value::as_table)
+            {
+                for (name, spec) in dependencies {
+                    if name == "python" {
+                        continue;
+                    }
+                    let version = if let toml::Value::String(version) = spec {
+                        Some(version.clone())
+                    } else if let Some(table) = spec.as_table() {
+                        table
+                            .get("version")
+                            .and_then(toml::Value::as_str)
+                            .map(str::to_string)
+                    } else {
+                        None
+                    };
+                    result.push((name.clone(), version));
+                    found = true;
+                }
+            }
+        }
+
+        if found == false {
+            if let Some(groups) = value
+                .get("tool")
+                .and_then(toml::Value::as_table)
+                .and_then(|tool| tool.get("poetry"))
+                .and_then(toml::Value::as_table)
+                .and_then(|poetry| poetry.get("group"))
+                .and_then(toml::Value::as_table)
+            {
+                for (_, group) in groups {
+                    if let Some(dependencies) = group
+                        .as_table()
+                        .and_then(|table| table.get("dependencies"))
+                        .and_then(toml::Value::as_table)
+                    {
+                        for (name, spec) in dependencies {
+                            let version = if let toml::Value::String(version) = spec {
+                                Some(version.clone())
+                            } else if let Some(table) = spec.as_table() {
+                                table
+                                    .get("version")
+                                    .and_then(toml::Value::as_str)
+                                    .map(str::to_string)
+                            } else {
+                                None
+                            };
+                            result.push((name.clone(), version));
+                            found = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(packages) = value.get("package").and_then(toml::Value::as_array) {
+            for package in packages {
+                if let Some(table) = package.as_table() {
+                    let name = table.get("name").and_then(toml::Value::as_str);
+                    let version = table.get("version").and_then(toml::Value::as_str);
+                    if let Some(name) = name {
+                        result.push((name.to_string(), version.map(str::to_string)));
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        if found {
+            dedupe_versions(result);
+            return true;
+        }
+    }
+
+    false
+}
+
+fn parse_pip_requirement(requirement: &str) -> (String, Option<String>) {
+    let requirement = requirement.split(';').next().unwrap_or(requirement).trim();
+    let requirement = requirement.split('[').next().unwrap_or(requirement).trim();
+    let name: String = requirement
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+        .collect();
+    let mut version = requirement[name.len()..].trim();
+    if version.is_empty() {
+        (name, None)
+    } else {
+        // Drop environment markers accidentally retained with the requirement.
+        if let Some(marker) = version.find(';') {
+            version = &version[..marker];
+        }
+        (name, Some(version.to_string()))
+    }
+}
+
 /// Returns declared dependencies with their version strings when available.
 pub fn declared_dependency_versions(
     ecosystem: &Ecosystem,
@@ -480,31 +665,38 @@ pub fn declared_dependency_versions(
     let mut result = Vec::new();
     match ecosystem {
         Ecosystem::Pip => {
-            for line in text.lines() {
-                let line = line.split('#').next().unwrap_or("").trim();
-                if line.is_empty() || line.starts_with("--") || line.starts_with("-") {
-                    continue;
-                }
-                let token = line.split_whitespace().next().unwrap_or("");
-                let name = token
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-                    .collect::<String>();
-                let version = token[name.len()..].trim();
-                if !name.is_empty() {
-                    result.push((
-                        name,
-                        if version.is_empty() {
-                            None
-                        } else {
-                            Some(version.to_string())
-                        },
-                    ));
+            // Lockfile/manifest formats differ by file content rather than by a
+            // path hint here, so detect the format and fall back to the legacy
+            // line-oriented requirements parser for anything unrecognized.
+            if !parse_pip_lockfile(text, &mut result) {
+                for line in text.lines() {
+                    let line = line.split('#').next().unwrap_or("").trim();
+                    if line.is_empty() || line.starts_with("--") || line.starts_with("-") {
+                        continue;
+                    }
+                    let token = line.split_whitespace().next().unwrap_or("");
+                    let name = token
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                        .collect::<String>();
+                    let version = token[name.len()..].trim();
+                    if !name.is_empty() {
+                        result.push((
+                            name,
+                            if version.is_empty() {
+                                None
+                            } else {
+                                Some(version.to_string())
+                            },
+                        ));
+                    }
                 }
             }
         }
         Ecosystem::Npm => {
-            if let Some(dependencies) = parse_npm_dependencies(text) {
+            if let Some(dependencies) = parse_npm_lockfile(text) {
+                result.extend(dependencies);
+            } else if let Some(dependencies) = parse_npm_dependencies(text) {
                 result.extend(dependencies);
             } else {
                 let mut in_dependencies = false;
@@ -568,38 +760,92 @@ pub fn declared_dependency_versions(
             }
         }
         Ecosystem::Go => {
-            let mut in_require = false;
-            for raw_line in text.lines() {
-                let line = raw_line.split("//").next().unwrap_or("").trim();
-                if line.starts_with("require (") {
-                    in_require = true;
-                    continue;
+            if let Ok(value) = toml::from_str::<toml::Value>(text) {
+                let mut found = false;
+                if let Some(projects) = value.get("projects").and_then(toml::Value::as_array) {
+                    for project in projects {
+                        if let Some(table) = project.as_table() {
+                            let name = table.get("name").and_then(toml::Value::as_str);
+                            let version = table
+                                .get("version")
+                                .and_then(toml::Value::as_str)
+                                .or_else(|| table.get("revision").and_then(toml::Value::as_str));
+                            if let Some(name) = name {
+                                result.push((name.to_string(), version.map(str::to_string)));
+                                found = true;
+                            }
+                        }
+                    }
                 }
-                if in_require && line == ")" {
-                    in_require = false;
-                    continue;
-                }
-                let require = if in_require {
-                    Some(line)
-                } else if line.starts_with("require ") {
-                    Some(line.trim_start_matches("require ").trim())
+                if found {
+                    dedupe_versions(&mut result);
+                    result.sort_by(|left, right| left.0.cmp(&right.0));
                 } else {
-                    None
-                };
-                if let Some(require) = require {
-                    let mut parts = require.split_whitespace();
-                    if let (Some(package), version) = (parts.next(), parts.next()) {
-                        result.push((package.to_string(), version.map(str::to_string)));
+                    let mut in_require = false;
+                    for raw_line in text.lines() {
+                        let line = raw_line.split("//").next().unwrap_or("").trim();
+                        if line.starts_with("require (") {
+                            in_require = true;
+                            continue;
+                        }
+                        if in_require && line == ")" {
+                            in_require = false;
+                            continue;
+                        }
+                        let require = if in_require {
+                            Some(line)
+                        } else if line.starts_with("require ") {
+                            Some(line.trim_start_matches("require ").trim())
+                        } else {
+                            None
+                        };
+                        if let Some(require) = require {
+                            let mut parts = require.split_whitespace();
+                            if let (Some(package), version) = (parts.next(), parts.next()) {
+                                result.push((package.to_string(), version.map(str::to_string)));
+                            }
+                        }
                     }
                 }
             }
         }
         Ecosystem::Maven => {
+            let mut parsed_xml = false;
             for line in text.lines() {
                 let trimmed = line.trim();
                 if let Some(rest) = trimmed.strip_prefix("<artifactId>") {
                     if let Some(name) = rest.strip_suffix("</artifactId>") {
                         result.push((name.trim().to_string(), None));
+                        parsed_xml = true;
+                    }
+                }
+                if let Some(rest) = trimmed.strip_prefix("<dependency>") {
+                    let _ = rest;
+                }
+            }
+            if !parsed_xml {
+                // Gradle-style dependency declarations.
+                for line in text.lines() {
+                    for quote in ['\'', '"'] {
+                        let mut remainder = line;
+                        while let Some(start) = remainder.find(quote) {
+                            let rest = &remainder[start + 1..];
+                            if let Some(end) = rest.find(quote) {
+                                let coords = &rest[..end];
+                                let parts: Vec<&str> = coords.split(':').collect();
+                                if parts.len() >= 2 {
+                                    let artifact = parts[1].trim().to_string();
+                                    let version =
+                                        parts.get(2).map(|value| value.trim().to_string());
+                                    if !artifact.is_empty() {
+                                        result.push((artifact, version));
+                                    }
+                                }
+                                remainder = &rest[end + 1..];
+                            } else {
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -670,6 +916,113 @@ fn trim_version(version: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn parse_npm_lockfile(text: &str) -> Option<Vec<(String, Option<String>)>> {
+    let trimmed = text.trim();
+    if trimmed.starts_with("lodash@")
+        || trimmed.contains("version \"")
+        || trimmed
+            .lines()
+            .any(|line| line.trim_end().ends_with(':') && line.contains('@'))
+    {
+        let mut result = Vec::new();
+        let lines: Vec<&str> = text.lines().collect();
+        let mut index = 0;
+        while index < lines.len() {
+            let line = lines[index].trim();
+            if line.ends_with(':') && !line.starts_with('#') && line.contains('@') {
+                let spec = line.trim_end_matches(':').trim();
+                let (name, _range) = split_npm_spec(spec);
+                let mut version = None;
+                let mut next = index + 1;
+                while next < lines.len()
+                    && (lines[next].starts_with(' ') || lines[next].starts_with('\t'))
+                {
+                    let inner = lines[next].trim();
+                    if let Some(rest) = inner.strip_prefix("version ") {
+                        version = Some(rest.trim().trim_matches('"').to_string());
+                        break;
+                    }
+                    next += 1;
+                }
+                if let Some(name) = name {
+                    if !name.is_empty() {
+                        result.push((name, version));
+                    }
+                }
+            }
+            index += 1;
+        }
+        if !result.is_empty() {
+            dedupe_versions(&mut result);
+            return Some(result);
+        }
+    }
+
+    // pnpm-style lockfiles with package keys.
+    if text.contains("packages:") {
+        let mut result = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.ends_with(':')
+                && (trimmed.contains("@") || trimmed.starts_with('/'))
+                && !trimmed.starts_with("packages:")
+            {
+                let key = trimmed
+                    .trim_end_matches(':')
+                    .trim()
+                    .trim_matches('\'')
+                    .trim_matches('"');
+                let (name, version) = split_pnpm_key(key);
+                if let (Some(name), Some(version)) = (name, version) {
+                    if !name.is_empty() {
+                        result.push((name, Some(version)));
+                    }
+                }
+            }
+        }
+        if !result.is_empty() {
+            dedupe_versions(&mut result);
+            return Some(result);
+        }
+    }
+
+    None
+}
+
+fn split_npm_spec(spec: &str) -> (Option<String>, Option<String>) {
+    // Handle scoped packages by splitting on the final '@'.
+    if spec.contains('@') && (spec.starts_with('@') || spec.rfind('@') != Some(0)) {
+        if let Some(at) = spec.rfind('@') {
+            if at > 0 {
+                return (
+                    Some(spec[..at].to_string()),
+                    Some(spec[at + 1..].to_string()),
+                );
+            }
+        }
+    }
+    (Some(spec.to_string()), None)
+}
+
+fn split_pnpm_key(key: &str) -> (Option<String>, Option<String>) {
+    let key = key.trim_start_matches('/');
+    if let Some(at) = key.rfind('@') {
+        if at > 0 {
+            let name = key[..at].trim_start_matches('/').to_string();
+            let version = key[at + 1..].split('/').next().unwrap_or("").to_string();
+            if !version.is_empty() {
+                return (Some(name), Some(version));
+            }
+        }
+    }
+    // Pattern: /name/version
+    let parts: Vec<&str> = key.trim_start_matches('/').split('/').collect();
+    if parts.len() >= 2 {
+        return (Some(parts[0].to_string()), Some(parts[1].to_string()));
+    }
+    (None, None)
 }
 
 fn parse_npm_dependencies(text: &str) -> Option<Vec<(String, Option<String>)>> {
@@ -912,135 +1265,13 @@ mod classification_tests {
 
 /// Lists the package names directly declared by a manifest.
 pub fn declared_dependencies(ecosystem: &Ecosystem, text: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    match ecosystem {
-        Ecosystem::Pip => {
-            for line in text.lines() {
-                let line = line.split('#').next().unwrap_or("").trim();
-                if line.is_empty() || line.starts_with("--") || line.starts_with("-") {
-                    continue;
-                }
-                let token = line.split_whitespace().next().unwrap_or("");
-                let name = token
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-                    .collect::<String>();
-                if !name.is_empty() {
-                    names.push(name);
-                }
-            }
-        }
-        Ecosystem::Npm => {
-            let mut in_dependencies = false;
-            let mut depth = 0;
-            for line in text.lines() {
-                let trimmed = line.trim();
-                if !in_dependencies {
-                    if trimmed.contains("\"dependencies\"")
-                        || trimmed.contains("\"devDependencies\"")
-                    {
-                        in_dependencies = trimmed.contains('{');
-                        depth = line.chars().filter(|c| *c == '{').count()
-                            - line.chars().filter(|c| *c == '}').count();
-                        collect_npm_keys(trimmed, &mut names);
-                    }
-                    continue;
-                }
-                depth += line.chars().filter(|c| *c == '{').count()
-                    - line.chars().filter(|c| *c == '}').count();
-                collect_npm_keys(trimmed, &mut names);
-                if depth <= 0 {
-                    in_dependencies = false;
-                }
-            }
-        }
-        Ecosystem::Cargo => {
-            if let Ok(value) = toml::from_str::<toml::Value>(text) {
-                for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
-                    if let Some(table) = value.get(key).and_then(toml::Value::as_table) {
-                        for name in table.keys() {
-                            names.push(name.clone());
-                        }
-                    }
-                }
-            }
-        }
-        Ecosystem::Go => {
-            let mut in_require = false;
-            for raw_line in text.lines() {
-                let line = raw_line.split("//").next().unwrap_or("").trim();
-                if line.starts_with("require (") {
-                    in_require = true;
-                    continue;
-                }
-                if in_require && line == ")" {
-                    in_require = false;
-                    continue;
-                }
-                let require = if in_require {
-                    Some(line)
-                } else if line.starts_with("require ") {
-                    Some(line.trim_start_matches("require ").trim())
-                } else {
-                    None
-                };
-                if let Some(require) = require {
-                    if let Some(package) = require.split_whitespace().next() {
-                        names.push(package.to_string());
-                    }
-                }
-            }
-        }
-        Ecosystem::Maven => {
-            let mut in_artifact = false;
-            for line in text.lines() {
-                let trimmed = line.trim();
-                if in_artifact {
-                    names.push(trimmed.to_string());
-                    in_artifact = false;
-                } else if trimmed == "<artifactId>" {
-                    in_artifact = true;
-                } else if let Some(rest) = trimmed.strip_prefix("<artifactId>") {
-                    if let Some(name) = rest.strip_suffix("</artifactId>") {
-                        names.push(name.trim().to_string());
-                    }
-                }
-            }
-        }
-    }
+    let mut names: Vec<String> = declared_dependency_versions(ecosystem, text)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
     dedupe(&mut names);
     names.sort();
     names
-}
-
-fn collect_npm_keys(line: &str, names: &mut Vec<String>) {
-    let chars: Vec<char> = line.chars().collect();
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '"' {
-            let start = index + 1;
-            let mut end = start;
-            while end < chars.len() && chars[end] != '"' {
-                end += 1;
-            }
-            if end < chars.len() {
-                let key = chars[start..end].iter().collect::<String>();
-                let rest = chars[end + 1..]
-                    .iter()
-                    .collect::<String>()
-                    .trim_start()
-                    .to_string();
-                if rest.starts_with(':') {
-                    names.push(key);
-                }
-                index = end + 1;
-            } else {
-                index = chars.len();
-            }
-        } else {
-            index += 1;
-        }
-    }
 }
 
 fn dedupe(names: &mut Vec<String>) {
@@ -1130,5 +1361,19 @@ mod lockfile_priority_tests {
         let versions = manifest_dependency_versions(&root, &Ecosystem::Cargo);
         assert_eq!(versions.get("serde"), Some(&Some("1.0.200".to_string())));
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// Conservative target-language replacement suggestions for known opaque
+/// dependencies. These are hints only: callers must never substitute them
+/// silently in generated source.
+pub fn dependency_alternatives(ecosystem: &Ecosystem, package: &str) -> &'static [&'static str] {
+    let package = package.to_ascii_lowercase();
+    match (ecosystem, package.as_str()) {
+        (Ecosystem::Pip, "pygame") => &["macroquad", "ggez", "bevy"],
+        (Ecosystem::Pip, "requests") => &["reqwest", "ureq"],
+        (Ecosystem::Pip, "numpy") => &["ndarray", "nalgebra"],
+        (Ecosystem::Npm, "express") => &["axum", "warp", "actix-web"],
+        _ => &[],
     }
 }

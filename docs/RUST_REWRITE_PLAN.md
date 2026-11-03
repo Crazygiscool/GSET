@@ -1,6 +1,6 @@
 # Rust Rewrite Plan
 
-Status: **approved, in progress** — `main` now carries the Rust workspace; M0-M2 complete, M3 in progress, M4-M6 pending.
+Status: **approved, in progress** — `main` now carries the Rust workspace; M0-M4 complete, M5 in progress, M6 pending consistency work.
 Decision date: 2026-10-02
 
 GSET is being rewritten from Go to Rust, and simultaneously redesigned from a
@@ -351,9 +351,9 @@ via `rayon`, content-hash caching.
 
 ### M5 — Ecosystem dependency resolution
 
-Status: **not started**.
+Status: **in progress**.
 
-pip, npm, Cargo, Maven, Go modules.
+Manifest and lockfile discovery now cover common lockfiles in addition to build manifests. Version classification and project-graph integration are being hardened before source-aware transpilation of dependencies.
 
 - **Lockfile-first.** Lockfiles are already solved, so parsing them is tractable.
   Manifest-only resolution is best-effort with an explicit "unpinned" diagnostic.

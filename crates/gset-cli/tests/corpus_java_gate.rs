@@ -124,6 +124,11 @@ fn the_java_backend_never_claims_a_program_it_cannot_compile() {
     let scratch = std::env::temp_dir().join(format!("gset-corpus-python-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).expect("scratch dir");
 
+    if !tool_starts("javac", "-version") {
+        eprintln!("required tooling is missing; skipping the corpus gate");
+        return;
+    }
+
     // The checked-in baseline holds classifications only. Diagnostics wording
     // changes whenever a message is improved, and a baseline that churns on
     // wording stops being read as evidence; the details are printed instead.

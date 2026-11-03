@@ -46,6 +46,20 @@ pub fn transpile(
     from: Option<&str>,
     target: &str,
 ) -> Result<Output, PipelineError> {
+    transpile_with_options(name, text, from, target, false)
+}
+
+/// Like [`transpile`], with optional experimental target-specific behaviour.
+pub fn transpile_with_options(
+    name: &str,
+    text: &str,
+    from: Option<&str>,
+    target: &str,
+    experimental_api_map: bool,
+) -> Result<Output, PipelineError> {
+    if experimental_api_map {
+        gset_backend::set_experimental_api_map(true);
+    }
     let frontend = match from {
         Some(language) => frontend_by_name(language)
             .ok_or_else(|| PipelineError::UnknownFrontend(language.to_string()))?,

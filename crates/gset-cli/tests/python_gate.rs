@@ -68,6 +68,10 @@ fn run_transpiles_then_executes_on_the_python_runtime() {
         eprintln!("python3 not on PATH; skipping the `run` end-to-end test");
         return;
     }
+    if !tool_starts("go", "version") {
+        eprintln!("go not on PATH; skipping the `run` end-to-end test");
+        return;
+    }
     let output = Command::new(env!("CARGO_BIN_EXE_gset"))
         .arg("run")
         .arg(workspace().join("tests/corpus/py/fib.py"))

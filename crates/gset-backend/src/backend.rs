@@ -6,6 +6,7 @@ use crate::go::Go;
 use crate::java::Java;
 use crate::js::JavaScript;
 use crate::ruby::Ruby;
+use crate::rust::Rust;
 use crate::target::{Capability, Support, TargetId};
 use crate::writer::CodeWriter;
 
@@ -128,6 +129,7 @@ pub fn backend_for(id: TargetId) -> Option<Box<dyn Backend>> {
         TargetId::JAVA => Some(Box::new(Java)),
         TargetId::JAVASCRIPT => Some(Box::new(JavaScript)),
         TargetId::RUBY => Some(Box::new(Ruby)),
+        TargetId::RUST => Some(Box::new(Rust)),
         _ => None,
     }
 }

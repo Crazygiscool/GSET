@@ -7,6 +7,15 @@ use std::process::Command;
 
 #[test]
 fn js_frontend_fib_to_go() {
+    if std::process::Command::new("gofmt")
+        .arg("-h")
+        .status()
+        .is_err()
+    {
+        eprintln!("gofmt not available; skipping");
+        return;
+    }
+
     let text = r#"
 function fib(n) {
     if (n < 2) return n;

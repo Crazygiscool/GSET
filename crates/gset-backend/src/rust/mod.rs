@@ -1,0 +1,1139 @@
+//! A first, narrow Rust target backend.
+//!
+//! Milestone R0 delivers a compilable target backend for a small typed subset.
+//! Larger language families remain explicitly unsupported rather than being
+//! emitted optimistically.
+
+use std::collections::HashSet;
+
+use gset_ir::{
+    BinaryOp, Block, Else, Expr, ExprKind, Function, Item, Literal, LogicalOp, Module, Pattern,
+    PatternKind, SourceMap, Span, Stmt, Type, UnaryOp,
+};
+
+use crate::Backend;
+use crate::target::{Capability, Support};
+use crate::writer::CodeWriter;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Rust;
+
+static EXPERIMENTAL_API_MAP: AtomicBool = AtomicBool::new(false);
+
+pub fn set_experimental_api_map(enabled: bool) {
+    EXPERIMENTAL_API_MAP.store(enabled, Ordering::Relaxed);
+}
+
+fn experimental_api_map() -> bool {
+    EXPERIMENTAL_API_MAP.load(Ordering::Relaxed)
+}
+
+impl Backend for Rust {
+    fn id(&self) -> crate::target::TargetId {
+        crate::target::TargetId::RUST
+    }
+
+    fn capability(&self, capability: Capability) -> Support {
+        match capability {
+            Capability::Exceptions => Support::Native,
+            Capability::Slices
+            | Capability::Closures
+            | Capability::Comprehensions
+            | Capability::Generators
+            | Capability::Classes => Support::Native,
+            _ => Support::Unsupported,
+        }
+    }
+
+    fn indentation(&self) -> &'static str {
+        "    "
+    }
+
+    fn emit_module(
+        &self,
+        module: &Module,
+        source_map: &SourceMap,
+        writer: &mut CodeWriter,
+        diagnostics: &mut gset_ir::DiagnosticBag,
+    ) {
+        let _ = source_map;
+        let class_names: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Class(class) => Some(class.name.to_string()),
+                _ => None,
+            })
+            .collect();
+
+        let mut functions = Vec::new();
+        let mut main_statements = Vec::new();
+        for item in &module.items {
+            match item {
+                Item::Function(function) => functions.push(function.clone()),
+                Item::Global(global) => main_statements.push(Stmt::Decl(global.clone())),
+                Item::Stmt(statement) => main_statements.push(statement.clone()),
+                Item::Import(import) => emit_import(diagnostics, import),
+                Item::Record(_) | Item::Enum(_) | Item::Interface(_) | Item::TypeAlias(_) => {
+                    unsupported_marker(diagnostics, item.span(), "an item");
+                }
+                Item::Class(class) => emit_class(writer, class, diagnostics),
+            }
+        }
+
+        let mut emitter = RustEmitter {
+            classes: class_names.clone(),
+            self_name: "self".to_string(),
+            generator_mode: false,
+            diagnostics,
+            writer,
+        };
+        for function in &functions {
+            emitter.emit_function(function);
+        }
+
+        emitter.writer.newline();
+        emitter.writer.writeln("fn main() {");
+        emitter.writer.indent();
+        emitter.emit_main_statements(&main_statements);
+        emitter.writer.dedent();
+        emitter.writer.writeln("}");
+    }
+}
+
+struct RustEmitter<'a> {
+    classes: HashSet<String>,
+    self_name: String,
+    generator_mode: bool,
+    diagnostics: &'a mut gset_ir::DiagnosticBag,
+    writer: &'a mut CodeWriter,
+}
+
+impl RustEmitter<'_> {
+    fn emit_main_statements(&mut self, statements: &[Stmt]) {
+        for statement in statements {
+            self.emit_stmt(statement);
+        }
+    }
+
+    fn emit_function(&mut self, function: &Function) {
+        let params = function
+            .params
+            .iter()
+            .enumerate()
+            .map(|(_index, pattern)| {
+                let binding = pattern_binding(pattern);
+                let ty = function
+                    .param_types
+                    .get(_index)
+                    .and_then(|ty| ty.as_ref())
+                    .map(rust_type)
+                    .unwrap_or_else(|| "i64".to_string());
+                format!("{binding}: {ty}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let generator = function_has_yield(function);
+        let ret = if generator {
+            let extracted = function
+                .ret
+                .as_ref()
+                .map(|ty| match ty {
+                    Type::List { element, .. } => rust_type(element),
+                    Type::Set(element) => rust_type(element),
+                    Type::Option(boxed) => rust_type(boxed),
+                    other => rust_type(other),
+                })
+                .unwrap_or_else(|| "i64".to_string());
+            format!("Vec<{}>", extracted)
+        } else {
+            match function.ret.as_ref() {
+                Some(gset_ir::Type::Unknown(_)) => {
+                    if function_returns_value(function) {
+                        "i64".to_string()
+                    } else {
+                        "()".to_string()
+                    }
+                }
+                Some(other) => rust_type(other),
+                None => {
+                    if function_returns_value(function) {
+                        "i64".to_string()
+                    } else {
+                        "()".to_string()
+                    }
+                }
+            }
+        };
+        self.writer.blank();
+        self.writer
+            .writeln(&format!("fn {}({}) -> {} {{", function.name, params, ret));
+        self.writer.indent();
+        if generator {
+            self.writer.writeln("let mut __out = Vec::new();");
+        }
+        let saved = self.generator_mode;
+        self.generator_mode = generator;
+        self.emit_block(&function.body);
+        self.generator_mode = saved;
+        if generator {
+            self.writer.writeln("__out");
+        } else {
+            self.writer.writeln("Default::default()");
+        }
+        self.writer.dedent();
+        self.writer.writeln("}");
+    }
+
+    fn emit_stmt(&mut self, statement: &Stmt) {
+        match statement {
+            Stmt::Decl(decl) => {
+                if let Some(value) = &decl.value {
+                    if let Some(binding) = decl.pattern.single_binding() {
+                        let value = self.expr(value);
+                        self.writer
+                            .writeln(&format!("let mut {} = {};", binding, value));
+                    } else {
+                        unsupported_marker(
+                            self.diagnostics,
+                            decl.span,
+                            "a destructuring declaration",
+                        );
+                    }
+                } else if let Some(binding) = decl.pattern.single_binding() {
+                    self.writer
+                        .writeln(&format!("let mut {}: i64 = 0;", binding));
+                }
+            }
+            Stmt::Expr(expr) => {
+                if let ExprKind::Literal(Literal::Str(_)) = &expr.kind {
+                    return;
+                }
+                if let ExprKind::Call { callee, args, .. } = &expr.kind
+                    && let ExprKind::Path(path) = &callee.kind
+                    && path.is_bare()
+                    && path.segments.first().map(|s| s.as_ref()) == Some("print")
+                {
+                    match args.as_slice() {
+                        args => {
+                            let placeholders = if args.len() == 1 {
+                                let format = match args[0].ty {
+                                    Type::Tuple(_)
+                                    | Type::List { .. }
+                                    | Type::Set(_)
+                                    | Type::Map(_)
+                                    | Type::OrderedMap { .. } => "{:?}",
+                                    _ => "{}",
+                                };
+                                format.to_string()
+                            } else {
+                                vec!["{}"; args.len()].join(" ")
+                            };
+                            let rendered: Vec<String> =
+                                args.iter().map(|arg| self.expr(arg)).collect();
+                            let joined = rendered.join(", ");
+                            self.writer
+                                .writeln(&format!("println!(\"{}\", {});", placeholders, joined))
+                        }
+                    }
+                    return;
+                }
+                let rendered = self.expr(expr);
+                self.writer.writeln(&format!("{};", rendered));
+            }
+            Stmt::Assign {
+                target,
+                value,
+                span,
+            } => {
+                if let PatternKind::Bind = target.kind {
+                    let binding = pattern_binding(target);
+                    let assigned = self.expr(value);
+                    self.writer.writeln(&format!("{} = {};", binding, assigned));
+                    return;
+                }
+                if let PatternKind::Location(expr) = &target.kind {
+                    let target = self.expr(expr);
+                    let assigned = self.expr(value);
+                    self.writer.writeln(&format!("{} = {};", target, assigned));
+                    return;
+                }
+                unsupported_marker(self.diagnostics, *span, "an assignment");
+            }
+            Stmt::Return {
+                value: Some(value), ..
+            } => {
+                let value = self.expr(value);
+                self.writer.writeln(&format!("return {};", value));
+            }
+            Stmt::Return { value: None, .. } => {
+                self.writer.writeln("return;");
+            }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let condition = self.truthy(condition);
+                self.writer.writeln(&format!("if {} {{", condition));
+                self.writer.indent();
+                self.emit_block(then_branch);
+                self.writer.dedent();
+                if let Some(else_branch) = else_branch {
+                    match else_branch.as_ref() {
+                        Else::Block(block) => {
+                            self.writer.writeln("} else {");
+                            self.writer.indent();
+                            self.emit_block(block);
+                            self.writer.dedent();
+                            self.writer.writeln("}");
+                            self.writer.writeln(";");
+                        }
+                        Else::If(nested) => {
+                            self.writer.writeln("} else {");
+                            self.writer.indent();
+                            self.emit_stmt(nested);
+                            self.writer.dedent();
+                            self.writer.writeln("}");
+                            self.writer.writeln(";");
+                        }
+                    }
+                } else {
+                    self.writer.writeln("}");
+                    self.writer.writeln(";");
+                }
+            }
+            Stmt::While {
+                condition, body, ..
+            } => {
+                let condition = self.truthy(condition);
+                self.writer.writeln(&format!("while {} {{", condition));
+                self.writer.indent();
+                self.emit_block(body);
+                self.writer.dedent();
+                self.writer.writeln("}");
+                self.writer.writeln(";");
+            }
+            Stmt::ForIn {
+                pattern,
+                iterable,
+                body,
+                is_async,
+                span,
+                ..
+            } => {
+                if *is_async {
+                    unsupported_marker(self.diagnostics, *span, "an async for loop");
+                    return;
+                }
+                let target = pattern_binding(pattern);
+                match &iterable.kind {
+                    ExprKind::Range { start, end, .. } => {
+                        let start = start
+                            .as_ref()
+                            .map(|e| self.expr(e))
+                            .unwrap_or_else(|| "0".to_string());
+                        let end = match end {
+                            Some(e) => self.expr(e),
+                            None => return,
+                        };
+                        self.writer
+                            .writeln(&format!("for mut {} in {}..{} {{", target, start, end));
+                    }
+                    ExprKind::Call { callee, args, .. } if path_name(callee) == Some("range") => {
+                        match args.as_slice() {
+                            [end] => {
+                                let end = self.expr(end);
+                                self.writer
+                                    .writeln(&format!("for mut {} in 0..{} {{", target, end));
+                            }
+                            [start, end] => {
+                                let start = self.expr(start);
+                                let end = self.expr(end);
+                                self.writer.writeln(&format!(
+                                    "for mut {} in {}..{} {{",
+                                    target, start, end
+                                ));
+                            }
+                            _ => {
+                                unsupported_marker(self.diagnostics, *span, "a for loop");
+                                return;
+                            }
+                        }
+                    }
+                    _ => {
+                        let iterable = self.expr(iterable);
+                        self.writer
+                            .writeln(&format!("for mut {} in {} {{", target, iterable));
+                    }
+                }
+                self.writer.indent();
+                self.emit_block(body);
+                self.writer.dedent();
+                self.writer.writeln("}");
+                return;
+            }
+            Stmt::Throw {
+                value: Some(value), ..
+            } => {
+                let rendered = self.expr(value);
+                self.writer
+                    .writeln(&format!("panic!(\"{{}}\", {});", rendered));
+            }
+            Stmt::Throw { value: None, .. } => {
+                self.writer.writeln("panic!();");
+            }
+            Stmt::Try {
+                body,
+                handlers,
+                finally,
+                ..
+            } => {
+                if handlers.is_empty() {
+                    self.emit_block(body);
+                    if let Some(finally) = finally {
+                        self.emit_block(finally);
+                    }
+                    return;
+                }
+                self.writer.writeln(
+                    "let __py_try = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {",
+                );
+                self.writer.indent();
+                self.emit_block(body);
+                self.writer.dedent();
+                self.writer.writeln("}));");
+                self.writer.writeln("if __py_try.is_err() {");
+                self.writer.indent();
+                self.writer
+                    .writeln("let __py_error = __py_try.as_ref().err().and_then(|error| error.downcast_ref::<&str>().map(|value| value.to_string())).or_else(|| __py_try.as_ref().err().and_then(|error| error.downcast_ref::<String>().cloned())).unwrap_or_else(|| format!(\"{:?}\", __py_try.as_ref().err().unwrap()));");
+                for handler in handlers {
+                    let binding = handler
+                        .binding
+                        .as_ref()
+                        .map(pattern_binding)
+                        .unwrap_or_else(|| "_".to_string());
+                    self.writer
+                        .writeln(&format!("let {} = __py_error.clone();", binding));
+                    self.emit_block(&handler.body);
+                }
+                self.writer.dedent();
+                self.writer.writeln("}");
+                if let Some(finally) = finally {
+                    self.emit_block(finally);
+                }
+            }
+            Stmt::Yield { value, .. } => {
+                if self.generator_mode {
+                    match value {
+                        Some(expr) => {
+                            let expr = self.expr(expr);
+                            self.writer.writeln(&format!("__out.push({});", expr));
+                        }
+                        None => self.writer.writeln("__out.push(());"),
+                    }
+                } else {
+                    unsupported_marker(
+                        self.diagnostics,
+                        statement.span(),
+                        "a yield outside a generator",
+                    )
+                }
+            }
+            _ => unsupported_marker(self.diagnostics, statement.span(), "a statement"),
+        }
+    }
+
+    fn truthy(&mut self, expr: &Expr) -> String {
+        let rendered = self.expr(expr);
+        match &expr.ty {
+            gset_ir::Type::Bool => rendered,
+            gset_ir::Type::Int(_) | gset_ir::Type::Unknown(_) => {
+                format!("({} != 0)", rendered)
+            }
+            gset_ir::Type::Float => format!("({} != 0.0)", rendered),
+            gset_ir::Type::Str | gset_ir::Type::StrLit | gset_ir::Type::Char => {
+                format!("!{}.is_empty()", rendered)
+            }
+            gset_ir::Type::List { .. } | gset_ir::Type::Tuple(_) | gset_ir::Type::Set(_) => {
+                format!("!{}.is_empty()", rendered)
+            }
+            gset_ir::Type::Map(_) | gset_ir::Type::OrderedMap { .. } => {
+                format!("!{}.is_empty()", rendered)
+            }
+            gset_ir::Type::Option(_) => format!("{}.is_some()", rendered),
+            gset_ir::Type::Null => "false".to_string(),
+            _ => rendered,
+        }
+    }
+
+    fn emit_block(&mut self, block: &Block) {
+        for statement in &block.statements {
+            self.emit_stmt(statement);
+        }
+    }
+
+    fn expr(&mut self, expr: &Expr) -> String {
+        if let ExprKind::Path(path) = &expr.kind
+            && path.is_bare()
+            && path.segments.first().map(|s| s.as_ref()) == Some("self")
+            && self.self_name != "self"
+        {
+            return self.self_name.clone();
+        }
+        match &expr.kind {
+            ExprKind::Literal(literal) => match literal {
+                Literal::Int(value) => value.clone(),
+                Literal::Float(value) => value.clone(),
+                Literal::Bool(true) => "true".to_string(),
+                Literal::Bool(false) => "false".to_string(),
+                Literal::Str(value) => format!("String::from({})", rust_string(value)),
+                Literal::Char(value) => value.clone(),
+                Literal::Bytes(value) => format!("\"{}\".as_bytes()", value),
+                Literal::Null => "()".to_string(),
+            },
+            ExprKind::Path(path) => path
+                .segments
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join("::"),
+            ExprKind::Unary { op, operand } => {
+                let operand = self.expr(operand);
+                match op {
+                    UnaryOp::Neg => format!("(-{})", operand),
+                    UnaryOp::Not => format!("!{}", operand),
+                    _ => unsupported_expr(self.diagnostics, expr.span),
+                }
+            }
+            ExprKind::Binary { op, lhs, rhs } => {
+                if *op == BinaryOp::Add
+                    && (matches!(lhs.ty, Type::Str | Type::StrLit | Type::Unknown(_))
+                        || matches!(rhs.ty, Type::Str | Type::StrLit | Type::Unknown(_)))
+                {
+                    let lhs = self.expr(lhs);
+                    let rhs = self.expr(rhs);
+                    let mut rendered = "format!(\"{}{}\", ".to_string();
+                    rendered.push_str(&lhs);
+                    rendered.push_str(", ");
+                    rendered.push_str(&rhs);
+                    rendered.push(')');
+                    return rendered;
+                }
+                let op = match op {
+                    BinaryOp::Add => "+",
+                    BinaryOp::Sub => "-",
+                    BinaryOp::Mul => "*",
+                    BinaryOp::Div => "/",
+                    BinaryOp::Rem => "%",
+                    BinaryOp::BitAnd => "&",
+                    BinaryOp::BitOr => "|",
+                    BinaryOp::BitXor => "^",
+                    BinaryOp::ShiftLeft => "<<",
+                    BinaryOp::ShiftRight => ">>",
+                    _ => return unsupported_expr(self.diagnostics, expr.span),
+                };
+                let lhs = self.expr(lhs);
+                let rhs = self.expr(rhs);
+                format!("{} {} {}", lhs, op, rhs)
+            }
+            ExprKind::Compare { op, lhs, rhs } => {
+                let op = match op {
+                    gset_ir::ComparisonOp::Eq => "==",
+                    gset_ir::ComparisonOp::Ne => "!=",
+                    gset_ir::ComparisonOp::Lt => "<",
+                    gset_ir::ComparisonOp::Le => "<=",
+                    gset_ir::ComparisonOp::Gt => ">",
+                    gset_ir::ComparisonOp::Ge => ">=",
+                    _ => return unsupported_expr(self.diagnostics, expr.span),
+                };
+                let lhs = self.expr(lhs);
+                let rhs = self.expr(rhs);
+                format!("{} {} {}", lhs, op, rhs)
+            }
+            ExprKind::Logical { op, lhs, rhs } => {
+                let op = match op {
+                    LogicalOp::And => "&&",
+                    LogicalOp::Or => "||",
+                };
+                let lhs = self.expr(lhs);
+                let rhs = self.expr(rhs);
+                format!("{} {} {}", lhs, op, rhs)
+            }
+            ExprKind::Call { callee, args, .. } => {
+                if let ExprKind::Path(path) = &callee.kind {
+                    if path.is_bare()
+                        && self
+                            .classes
+                            .contains(path.segments.first().map(|s| s.as_ref()).unwrap_or(""))
+                    {
+                        let class_name = path.segments[0].to_string();
+                        let args = args
+                            .iter()
+                            .map(|arg| self.expr(arg))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return format!("{}::new({})", class_name, args);
+                    }
+                }
+                let full_name = if let ExprKind::Path(path) = &callee.kind
+                    && path.is_bare()
+                {
+                    Some(
+                        path.segments
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                            .join("."),
+                    )
+                } else {
+                    None
+                };
+                if let Some(name) = full_name {
+                    match name.as_str() {
+                        "abs" if args.len() == 1 => {
+                            let arg = self.expr(&args[0]);
+                            return format!("{}.abs()", arg);
+                        }
+                        "len" if args.len() == 1 => {
+                            let arg = self.expr(&args[0]);
+                            return format!("{}.len()", arg);
+                        }
+                        "math.sqrt" if args.len() == 1 && experimental_api_map() => {
+                            let arg = self.expr(&args[0]);
+                            return format!("{}.sqrt()", arg);
+                        }
+                        _ => {}
+                    }
+                }
+                let callee = self.expr(callee);
+                let args = args
+                    .iter()
+                    .map(|arg| self.expr(arg))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}({})", callee, args)
+            }
+            ExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+                named_args,
+                ..
+            } => {
+                if !named_args.is_empty() {
+                    unsupported_marker(self.diagnostics, expr.span, "keyword arguments");
+                }
+                let args = args
+                    .iter()
+                    .map(|arg| self.expr(arg))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}.{}({})", self.expr(receiver), method, args)
+            }
+            ExprKind::Field { target, field } => format!("{}.{}", self.expr(target), field),
+            ExprKind::Index { target, index } => {
+                let target_expr = self.expr(target);
+                let is_map = matches!(target.ty, Type::Map(_) | Type::OrderedMap { .. });
+                if is_map {
+                    let index = self.expr(index);
+                    format!("{}.get(&{}).cloned().unwrap()", target_expr, index)
+                } else {
+                    format!("{}[{} as usize]", target_expr, self.expr(index))
+                }
+            }
+            ExprKind::List { elements } => {
+                let elements = elements
+                    .iter()
+                    .map(|element| self.expr(element))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("vec![{}]", elements)
+            }
+            ExprKind::Tuple { elements } => {
+                let elements = elements
+                    .iter()
+                    .map(|element| self.expr(element))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("({})", elements)
+            }
+            ExprKind::Set { elements } => {
+                let elements = elements
+                    .iter()
+                    .map(|element| self.expr(element))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("std::collections::HashSet::from([{}])", elements)
+            }
+            ExprKind::Map { entries } => {
+                let entries = entries
+                    .iter()
+                    .map(|entry| {
+                        format!(
+                            "({}.to_string(), {})",
+                            rust_string(&entry.name.to_string()),
+                            self.expr(&entry.value)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("std::collections::HashMap::from([{}])", entries)
+            }
+            ExprKind::Slice {
+                target,
+                start,
+                end,
+                step,
+                inclusive,
+                ..
+            } => {
+                if step.is_some() {
+                    return unsupported_expr(self.diagnostics, expr.span);
+                }
+                let target = self.expr(target);
+                let start = start
+                    .as_ref()
+                    .map(|expr| self.expr(expr))
+                    .unwrap_or_else(|| "".to_string());
+                let end = if *inclusive {
+                    end.as_ref()
+                        .map(|expr| self.expr(expr))
+                        .map(|value| format!("{} + 1", value))
+                } else {
+                    end.as_ref().map(|expr| self.expr(expr))
+                }
+                .unwrap_or_else(|| "".to_string());
+                if start.is_empty() && end.is_empty() {
+                    format!("{}[..]", target)
+                } else if end.is_empty() {
+                    format!("{}[{}..]", target, start)
+                } else {
+                    format!("{}[{}..{}]", target, start, end)
+                }
+            }
+            ExprKind::Range {
+                start,
+                end,
+                inclusive,
+                ..
+            } => {
+                let start = start
+                    .as_ref()
+                    .map(|expr| self.expr(expr))
+                    .unwrap_or_else(|| "0".to_string());
+                let end = end
+                    .as_ref()
+                    .map(|expr| self.expr(expr))
+                    .unwrap_or_else(|| "usize::MAX".to_string());
+                if *inclusive {
+                    format!("{}..={}", start, end)
+                } else {
+                    format!("{}..{}", start, end)
+                }
+            }
+            ExprKind::Lambda { params, body, .. } => {
+                let params = params
+                    .iter()
+                    .map(pattern_binding)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("|{}| {}", params, self.expr(body))
+            }
+            ExprKind::Comprehension {
+                element,
+                clauses,
+                condition,
+                ..
+            } => {
+                let mut out = String::from("{ let mut __out = Vec::new(); ");
+                for clause in clauses {
+                    let target = pattern_binding(&clause.pattern);
+                    let iterable = match &clause.iterable.kind {
+                        ExprKind::Range { start, end, .. } => {
+                            let start = start
+                                .as_ref()
+                                .map(|expr| self.expr(expr))
+                                .unwrap_or_else(|| "0".to_string());
+                            let end = end
+                                .as_ref()
+                                .map(|expr| self.expr(expr))
+                                .unwrap_or_else(|| "usize::MAX".to_string());
+                            format!("{}..{}", start, end)
+                        }
+                        ExprKind::Call { callee, args, .. }
+                            if path_name(callee) == Some("range") =>
+                        {
+                            match args.as_slice() {
+                                [end] => format!("0..{}", self.expr(end)),
+                                [start, end] => format!("{}..{}", self.expr(start), self.expr(end)),
+                                _ => return unsupported_expr(self.diagnostics, expr.span),
+                            }
+                        }
+                        _ => self.expr(&clause.iterable),
+                    };
+                    out.push_str(&format!("for mut {} in {} {{ ", target, iterable));
+                }
+                if condition.is_some() {
+                    if let Some(condition) = condition.as_ref() {
+                        out.push_str(&format!("if {} {{ ", self.expr(condition)));
+                    }
+                }
+                out.push_str(&format!("__out.push({}); ", self.expr(element)));
+                if condition.is_some() {
+                    out.push_str("} ");
+                }
+                for _ in clauses {
+                    out.push_str("} ");
+                }
+                out.push_str("__out }");
+                out
+            }
+            _ => unsupported_expr(self.diagnostics, expr.span),
+        }
+    }
+}
+
+fn path_name(expr: &Expr) -> Option<&str> {
+    if let ExprKind::Path(path) = &expr.kind
+        && path.is_bare()
+        && path.segments.len() == 1
+    {
+        Some(path.segments[0].as_ref())
+    } else {
+        None
+    }
+}
+
+fn function_returns_value(function: &Function) -> bool {
+    fn block_returns(block: &Block) -> bool {
+        block.statements.iter().any(statement_returns_value)
+    }
+    fn statement_returns_value(statement: &Stmt) -> bool {
+        match statement {
+            Stmt::Return { value: Some(_), .. } => true,
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                block_returns(then_branch)
+                    || else_branch
+                        .as_ref()
+                        .map(|branch| match branch.as_ref() {
+                            Else::Block(block) => block_returns(block),
+                            Else::If(statement) => statement_returns_value(statement),
+                        })
+                        .unwrap_or(false)
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } => block_returns(body),
+            Stmt::Block(block) => block_returns(block),
+            _ => false,
+        }
+    }
+    block_returns(&function.body)
+}
+
+fn function_has_yield(function: &Function) -> bool {
+    fn block_has_yield(block: &gset_ir::Block) -> bool {
+        block.statements.iter().any(statement_has_yield)
+    }
+    fn statement_has_yield(statement: &Stmt) -> bool {
+        match statement {
+            Stmt::Yield { .. } => true,
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                block_has_yield(then_branch)
+                    || else_branch
+                        .as_ref()
+                        .map(|branch| match branch.as_ref() {
+                            gset_ir::Else::Block(block) => block_has_yield(block),
+                            gset_ir::Else::If(statement) => statement_has_yield(statement),
+                        })
+                        .unwrap_or(false)
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } | Stmt::ForIn { body, .. } => {
+                block_has_yield(body)
+            }
+            Stmt::Block(block) => block_has_yield(block),
+            _ => false,
+        }
+    }
+    block_has_yield(&function.body)
+}
+
+fn pattern_binding(pattern: &Pattern) -> String {
+    pattern
+        .single_binding()
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "_".to_string())
+}
+
+fn rust_type(ty: &Type) -> String {
+    match ty {
+        Type::Bool => "bool".to_string(),
+        Type::Int(_) => "i64".to_string(),
+        Type::Float => "f64".to_string(),
+        Type::Str | Type::StrLit => "String".to_string(),
+        Type::Char => "char".to_string(),
+        Type::List { element, .. } => {
+            format!("Vec<{}>", rust_type(element))
+        }
+        Type::Set(element) => {
+            format!("std::collections::HashSet<{}>", rust_type(element))
+        }
+        Type::Map(value) => format!("std::collections::HashMap<String, {}>", rust_type(value)),
+        Type::OrderedMap { key, value, .. } => format!(
+            "std::collections::HashMap<{}, {}>",
+            rust_type(key),
+            rust_type(value)
+        ),
+        Type::Tuple(elements) => format!(
+            "({})",
+            elements
+                .iter()
+                .map(rust_type)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => "i64".to_string(),
+    }
+}
+
+fn emit_import(diagnostics: &mut gset_ir::DiagnosticBag, import: &gset_ir::Import) {
+    let path = import
+        .path
+        .segments
+        .iter()
+        .map(|s| s.as_ref())
+        .collect::<Vec<_>>()
+        .join("::");
+    diagnostics.push(
+        gset_ir::Diagnostic::warning(
+            import.span,
+            format!("import `{}` has no Rust equivalent and was dropped", path),
+        )
+        .with_code("gset-backend-import"),
+    );
+}
+
+fn unsupported_marker(diagnostics: &mut gset_ir::DiagnosticBag, span: Span, what: &str) {
+    diagnostics.push(
+        gset_ir::Diagnostic::error(
+            span,
+            format!(
+                "this backend cannot express {}: it is reported rather than emitted",
+                what
+            ),
+        )
+        .with_code("gset-backend-unsupported"),
+    );
+}
+
+fn unsupported_expr(diagnostics: &mut gset_ir::DiagnosticBag, span: Span) -> String {
+    unsupported_marker(diagnostics, span, "an expression");
+    "0".to_string()
+}
+
+fn rust_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn emit_class(
+    writer: &mut CodeWriter,
+    class: &gset_ir::Class,
+    diagnostics: &mut gset_ir::DiagnosticBag,
+) {
+    let mut fields: Vec<(String, Option<gset_ir::Type>)> = Vec::new();
+    for field in &class.fields {
+        if let Some(name) = field.pattern.single_binding() {
+            fields.push((name.to_string(), field.ty.clone()));
+        }
+    }
+
+    // Python classes conventionally configure fields in __init__. Capture the
+    // names assigned to `self` so the Rust struct can hold them.
+    let init = class
+        .constructors
+        .iter()
+        .find(|m| m.name.to_string() == "__init__")
+        .or_else(|| {
+            class
+                .methods
+                .iter()
+                .find(|m| m.name.to_string() == "__init__")
+        });
+    if let Some(init) = init {
+        for statement in &init.body.statements {
+            if let gset_ir::Stmt::Assign { target, .. } = statement {
+                if let gset_ir::PatternKind::Location(expr) = &target.kind {
+                    if let ExprKind::Field {
+                        target: base,
+                        field,
+                    } = &expr.kind
+                    {
+                        if let ExprKind::Path(path) = &base.kind
+                            && path.is_bare()
+                            && path.segments.first().map(|s| s.as_ref()) == Some("self")
+                        {
+                            fields.push((field.to_string(), None));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fields.sort_by(|left, right| left.0.cmp(&right.0));
+    fields.dedup_by(|left, right| left.0 == right.0);
+
+    writer.blank();
+    writer.writeln(&format!("struct {} {{", class.name));
+    writer.indent();
+    if fields.is_empty() {
+        writer.writeln("_: ()");
+    } else {
+        for (name, ty) in &fields {
+            let ty = ty
+                .as_ref()
+                .map(rust_type)
+                .unwrap_or_else(|| "i64".to_string());
+            writer.writeln(&format!("{}: {}", name, ty));
+        }
+    }
+    writer.dedent();
+    writer.writeln("}");
+
+    writer.blank();
+    writer.writeln(&format!("impl {} {{", class.name));
+    writer.indent();
+
+    let init = class
+        .constructors
+        .iter()
+        .find(|m| m.name.to_string() == "__init__")
+        .or_else(|| {
+            class
+                .methods
+                .iter()
+                .find(|m| m.name.to_string() == "__init__")
+        });
+    if let Some(init) = init {
+        let args = init
+            .params
+            .iter()
+            .skip(1)
+            .enumerate()
+            .map(|(_index, pattern)| {
+                let binding = pattern
+                    .single_binding()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| "_".to_string());
+                format!("{}: i64", binding)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        writer.writeln(&format!("fn new({}) -> Self {{", args));
+        writer.indent();
+        writer.writeln(&format!(
+            "let mut __self = Self {{ {} }};",
+            fields
+                .iter()
+                .map(|(name, _ty)| format!("{}: Default::default()", name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        for statement in &init.body.statements {
+            match statement {
+                Stmt::Decl(_) => {}
+                statement => {
+                    // Reuse the ordinary statement emitter shape as simple text.
+                    let mut emitter = RustEmitter {
+                        classes: HashSet::new(),
+                        self_name: "__self".to_string(),
+                        generator_mode: false,
+                        diagnostics,
+                        writer,
+                    };
+                    emitter.emit_stmt(statement);
+                }
+            }
+        }
+        writer.writeln("__self");
+        writer.dedent();
+        writer.writeln("}");
+    }
+
+    for method in &class.methods {
+        if method.name.to_string() == "__init__" {
+            continue;
+        }
+        let params = method
+            .params
+            .get(1..)
+            .unwrap_or(&[])
+            .iter()
+            .enumerate()
+            .map(|(_index, pattern)| {
+                let binding = pattern
+                    .single_binding()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| "_".to_string());
+                let ty = method
+                    .param_types
+                    .get(_index + 1)
+                    .and_then(|ty| ty.as_ref())
+                    .map(rust_type)
+                    .unwrap_or_else(|| "i64".to_string());
+                format!("{}: {}", binding, ty)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ret = method.ret.as_ref().map(rust_type).unwrap_or_else(|| {
+            if function_returns_value(method) {
+                "i64".to_string()
+            } else {
+                "()".to_string()
+            }
+        });
+        let rendered_ret = if ret == "()" {
+            "".to_string()
+        } else {
+            format!(" -> {}", ret)
+        };
+        writer.blank();
+        writer.writeln(&format!(
+            "fn {} (&mut self, {}) {} {{",
+            method.name, params, rendered_ret
+        ));
+        writer.indent();
+        let mut emitter = RustEmitter {
+            classes: HashSet::new(),
+            self_name: "self".to_string(),
+            generator_mode: false,
+            diagnostics,
+            writer,
+        };
+        emitter.emit_block(&method.body);
+        writer.dedent();
+        if ret != "()" {
+            // Rust needs an explicit value; Python bare returns can be added later.
+        }
+        writer.writeln("}");
+    }
+
+    writer.dedent();
+    writer.writeln("}");
+    diagnostics.push(gset_ir::Diagnostic::warning(
+        class.span,
+        format!(
+            "class `{}` was converted to a Rust struct/method skeleton; Python object semantics may not hold",
+            class.name
+        ),
+    ).with_code("gset-backend-import"));
+}

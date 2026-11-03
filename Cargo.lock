@@ -312,6 +312,7 @@ dependencies = [
  "gset-ir",
  "gset-semantic",
  "serde",
+ "serde_json",
  "thiserror",
  "toml",
 ]

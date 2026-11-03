@@ -7,6 +7,14 @@ const FIXTURES: &[&str] = &["fib", "returns", "null_handling"];
 
 #[test]
 fn python_matches_go_on_self_contained_fixtures() {
+    if std::process::Command::new("go")
+        .arg("version")
+        .status()
+        .is_err()
+    {
+        eprintln!("go not available; skipping differential execution test");
+        return;
+    }
     for name in FIXTURES {
         let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/corpus/py")

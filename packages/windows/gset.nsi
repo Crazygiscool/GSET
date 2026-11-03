@@ -31,7 +31,7 @@ ${UnStrRep}
 !define /IfNDef PRODUCTNAME "GSET"
 !define /IfNDef PUBLISHER   "GSET Team"
 !define /IfNDef WEBSITE     "https://github.com/Crazygiscool/GSETLang"
-!define /IfNDef VERSION     "3.4.0"
+!define /IfNDef VERSION     "3.5.0"
 !define /IfNDef UNINST_KEY  "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET"
 
 ; File inputs. Defaults resolve relative to this script's directory.

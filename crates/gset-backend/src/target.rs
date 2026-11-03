@@ -32,6 +32,8 @@ impl TargetId {
     pub const JAVA: TargetId = TargetId(3);
     /// Ruby.
     pub const RUBY: TargetId = TargetId(4);
+    /// Rust.
+    pub const RUST: TargetId = TargetId(5);
 
     /// Wraps a raw identifier.
     pub const fn from_raw(raw: u16) -> TargetId {
@@ -54,6 +56,7 @@ impl TargetId {
             "js" | "javascript" | "node" => TargetId::JAVASCRIPT,
             "java" => TargetId::JAVA,
             "rb" | "ruby" => TargetId::RUBY,
+            "rs" | "rust" => TargetId::RUST,
             _ => return None,
         })
     }
@@ -66,6 +69,7 @@ impl TargetId {
             TargetId::JAVASCRIPT => "javascript",
             TargetId::JAVA => "java",
             TargetId::RUBY => "ruby",
+            TargetId::RUST => "rust",
             _ => "unknown",
         }
     }
@@ -78,17 +82,19 @@ impl TargetId {
             TargetId::JAVASCRIPT => "js",
             TargetId::JAVA => "java",
             TargetId::RUBY => "rb",
+            TargetId::RUST => "rs",
             _ => "txt",
         }
     }
 
     /// Every target, in naming order.
-    pub const ALL: [TargetId; 5] = [
+    pub const ALL: [TargetId; 6] = [
         TargetId::GO,
         TargetId::PYTHON,
         TargetId::JAVASCRIPT,
         TargetId::JAVA,
         TargetId::RUBY,
+        TargetId::RUST,
     ];
 }
 

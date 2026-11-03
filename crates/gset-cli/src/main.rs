@@ -23,7 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 use gset_backend::TargetId;
-use gset_cli::{Output, PipelineError, transpile};
+use gset_cli::{Output, PipelineError, transpile_with_options};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -58,6 +58,9 @@ enum Command {
         /// Print diagnostics even when there are none
         #[arg(long)]
         verbose: bool,
+        /// Enable experimental backend-specific API mappings
+        #[arg(long, name = "experimental-api-map")]
+        experimental_api_map: bool,
     },
     /// Transpile a source file, then execute it on the target runtime
     Run {
@@ -72,6 +75,9 @@ enum Command {
         /// Keep the generated file instead of deleting it after the run
         #[arg(long)]
         keep: bool,
+        /// Enable experimental backend-specific API mappings
+        #[arg(long, name = "experimental-api-map")]
+        experimental_api_map: bool,
     },
     /// Print the version
     Version,
@@ -88,6 +94,7 @@ fn main() -> ExitCode {
             from,
             output,
             verbose,
+            experimental_api_map,
         } => transpile_command(
             &path,
             &to,
@@ -95,13 +102,15 @@ fn main() -> ExitCode {
             &dep_paths,
             output.as_deref(),
             verbose,
+            experimental_api_map,
         ),
         Command::Run {
             path,
             to,
             from,
             keep,
-        } => run_command(&path, &to, from.as_deref(), keep),
+            experimental_api_map,
+        } => run_command(&path, &to, from.as_deref(), keep, experimental_api_map),
         Command::Version => {
             println!("GSET v{}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -116,7 +125,11 @@ fn transpile_directory(
     dep_paths: &[PathBuf],
     destination: Option<&Path>,
     verbose: bool,
+    experimental_api_map: bool,
 ) -> ExitCode {
+    if experimental_api_map {
+        gset_backend::set_experimental_api_map(true);
+    }
     let mut all_roots = Vec::new();
     all_roots.push(root.to_path_buf());
     all_roots.extend(dep_paths.iter().cloned());
@@ -272,6 +285,11 @@ fn transpile_directory(
                             .and_then(|versions| versions.get(&name))
                             .and_then(|version| version.as_deref());
                         let resolution = gset_deps::classify_import(&ecosystem, &name, version);
+                        let dependency_node = gset_deps::ModuleId(format!("{ecosystem:?}::{name}"));
+                        graph.add_module(dependency_node.clone(), std::path::PathBuf::from(&name));
+                        if let Err(error) = graph.add_dependency(&from_id, &dependency_node) {
+                            eprintln!("gset: {source:?}: dependency graph: {error:?}");
+                        }
                         match &resolution {
                             gset_ir::ModuleSource::Sdk { runtime } => {
                                 eprintln!(
@@ -288,6 +306,14 @@ fn transpile_directory(
                                      provide it with the target package manager",
                                     source.display()
                                 );
+                                for alternative in
+                                    gset_deps::dependency_alternatives(&ecosystem, &name)
+                                {
+                                    eprintln!(
+                                        "gset: {}: possible target-side alternative for `{requirement}`: `{alternative}`",
+                                        source.display()
+                                    );
+                                }
                             }
                             gset_ir::ModuleSource::LockedRemote { version, .. } => {
                                 eprintln!(
@@ -424,6 +450,21 @@ fn transpile_directory(
     if overall_failed {
         ExitCode::from(1)
     } else {
+        if target == "rust" {
+            let cargo_manifest = output_root.join("Cargo.toml");
+            let manifest = r#"[package]
+name = "gset-rust-project"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "gset-rust-project"
+path = "main.rs"
+
+[dependencies]
+"#;
+            let _ = std::fs::write(&cargo_manifest, manifest);
+        }
         write_content_hash(&output_root, content_hash);
         ExitCode::SUCCESS
     }
@@ -484,6 +525,14 @@ fn project_content_hash(root: &Path, target: &str, from: Option<&str>, sources: 
             text.hash(&mut hasher);
         }
     }
+    if let Ok(manifests) = gset_deps::discover_manifests(root) {
+        for manifest in manifests {
+            manifest.path.hash(&mut hasher);
+            if let Ok(text) = std::fs::read_to_string(&manifest.path) {
+                text.hash(&mut hasher);
+            }
+        }
+    }
     hasher.finish()
 }
 
@@ -505,11 +554,23 @@ fn transpile_command(
     dep_paths: &[PathBuf],
     destination: Option<&Path>,
     verbose: bool,
+    experimental_api_map: bool,
 ) -> ExitCode {
     if path.is_dir() {
-        return transpile_directory(path, target, from, dep_paths, destination, verbose);
+        return transpile_directory(
+            path,
+            target,
+            from,
+            dep_paths,
+            destination,
+            verbose,
+            experimental_api_map,
+        );
     }
-    let output = match load(path, target, from) {
+    if experimental_api_map {
+        gset_backend::set_experimental_api_map(true);
+    }
+    let output = match load(path, target, from, experimental_api_map) {
         Ok(output) => output,
         Err(code) => return code,
     };
@@ -535,8 +596,14 @@ fn transpile_command(
     }
 }
 
-fn run_command(path: &Path, target: &str, from: Option<&str>, keep: bool) -> ExitCode {
-    let output = match load(path, target, from) {
+fn run_command(
+    path: &Path,
+    target: &str,
+    from: Option<&str>,
+    keep: bool,
+    experimental_api_map: bool,
+) -> ExitCode {
+    let output = match load(path, target, from, experimental_api_map) {
         Ok(output) => output,
         Err(code) => return code,
     };
@@ -565,6 +632,8 @@ fn run_command(path: &Path, target: &str, from: Option<&str>, keep: bool) -> Exi
 
     let code = if id == TargetId::JAVA {
         run_java(&directory, &program)
+    } else if id == TargetId::RUST {
+        run_rust(&directory, &program)
     } else {
         let Some(mut command) = runtime_command(id) else {
             eprintln!("gset: running {id} is not supported yet");
@@ -650,6 +719,47 @@ fn run_java(directory: &Path, program: &Path) -> ExitCode {
     }
 }
 
+fn run_rust(directory: &Path, program: &Path) -> ExitCode {
+    let output_path = directory.join("program");
+    let compile = ProcessCommand::new("rustc")
+        .current_dir(directory)
+        .arg("--edition")
+        .arg("2024")
+        .arg(program)
+        .arg("-o")
+        .arg(&output_path)
+        .status();
+    match compile {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            return ExitCode::from(
+                status
+                    .code()
+                    .filter(|code| (0..=255).contains(code))
+                    .unwrap_or(1) as u8,
+            );
+        }
+        Err(error) => {
+            eprintln!("gset: cannot compile Rust source: {error}");
+            return ExitCode::from(127);
+        }
+    }
+
+    let execution = ProcessCommand::new(&output_path).status();
+    match execution {
+        Ok(status) => ExitCode::from(
+            status
+                .code()
+                .filter(|code| (0..=255).contains(code))
+                .unwrap_or(1) as u8,
+        ),
+        Err(error) => {
+            eprintln!("gset: cannot run Rust program: {error}");
+            ExitCode::from(127)
+        }
+    }
+}
+
 /// A per-invocation directory under the system temp directory.
 ///
 /// The name includes the process id and a nanosecond timestamp so two `gset`
@@ -667,7 +777,12 @@ fn temp_directory(source: &Path) -> PathBuf {
     std::env::temp_dir().join(format!("gset-{stem}-{}-{nanos}", std::process::id()))
 }
 
-fn load(path: &Path, target: &str, from: Option<&str>) -> Result<Output, ExitCode> {
+fn load(
+    path: &Path,
+    target: &str,
+    from: Option<&str>,
+    experimental_api_map: bool,
+) -> Result<Output, ExitCode> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) => {
@@ -677,7 +792,8 @@ fn load(path: &Path, target: &str, from: Option<&str>) -> Result<Output, ExitCod
     };
     let name = path.to_string_lossy();
 
-    match transpile(&name, &text, from, target) {
+    gset_backend::set_experimental_api_map(experimental_api_map);
+    match transpile_with_options(&name, &text, from, target, experimental_api_map) {
         Ok(output) => Ok(output),
         Err(error) => {
             print_pipeline_error(&error);

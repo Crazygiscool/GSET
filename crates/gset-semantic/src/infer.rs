@@ -1090,9 +1090,12 @@ fn map_key_type(ty: &Type) -> Type {
 /// single-module behaviour first so a project can be lowered and checked before
 /// cross-module import resolution is available.
 pub fn infer_project(modules: &mut [Module]) -> gset_ir::DiagnosticBag {
-    let mut diagnostics = gset_ir::DiagnosticBag::new();
-    for module in modules {
-        diagnostics.extend(infer(module));
+    use rayon::prelude::*;
+
+    let diagnostics: Vec<gset_ir::DiagnosticBag> = modules.par_iter_mut().map(infer).collect();
+    let mut all = gset_ir::DiagnosticBag::new();
+    for bag in diagnostics {
+        all.extend(bag);
     }
-    diagnostics
+    all
 }

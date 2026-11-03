@@ -48,7 +48,9 @@ mod capabilities;
 mod go;
 mod java;
 mod js;
+mod python;
 mod ruby;
+mod rust;
 mod target;
 mod writer;
 
@@ -57,6 +59,6 @@ pub use java::Java;
 pub use js::JavaScript;
 pub use python::Python;
 pub use ruby::Ruby;
+pub use rust::{Rust, set_experimental_api_map};
 pub use target::{Capability, Support, TargetId};
 pub use writer::CodeWriter;
-mod python;
