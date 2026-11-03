@@ -128,6 +128,90 @@ impl Default for Value {
 fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
 fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
 
+impl std::ops::Sub<i64> for Value {
+    type Output = Value;
+    fn sub(self, rhs: i64) -> Self {
+        match self {
+            Value::Int(v) => Value::Int(v - rhs),
+            Value::Float(v) => Value::Float(v - (rhs as f64)),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Mul<i64> for Value {
+    type Output = Value;
+    fn mul(self, rhs: i64) -> Self {
+        match self {
+            Value::Int(v) => Value::Int(v * rhs),
+            Value::Float(v) => Value::Float(v * (rhs as f64)),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Add<i64> for Value {
+    type Output = Value;
+    fn add(self, rhs: i64) -> Self {
+        match self {
+            Value::Int(v) => Value::Int(v + rhs),
+            Value::Float(v) => Value::Float(v + rhs as f64),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Div<i64> for Value {
+    type Output = Value;
+    fn div(self, rhs: i64) -> Self {
+        match self {
+            Value::Int(v) => Value::Int(v / rhs),
+            Value::Float(v) => Value::Float(v / rhs as f64),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Rem<i64> for Value {
+    type Output = Value;
+    fn rem(self, rhs: i64) -> Self {
+        match self {
+            Value::Int(v) => Value::Int(v % rhs),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::BitOr<i64> for Value {
+    type Output = Value;
+    fn bitor(self, rhs: i64) -> Self {
+        match self {
+            Value::Int(v) => Value::Int(v | rhs),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Shl<i64> for Value {
+    type Output = Value;
+    fn shl(self, rhs: i64) -> Self {
+        match self {
+            Value::Int(v) => Value::Int(v << rhs),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Shr<i64> for Value {
+    type Output = Value;
+    fn shr(self, rhs: i64) -> Self {
+        match self {
+            Value::Int(v) => Value::Int(v >> rhs),
+            _ => Value::Null,
+        }
+    }
+}
+
 fn fib(n: i64) -> i64 {
     if n < 2 {
         return n;
