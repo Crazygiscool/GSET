@@ -15,11 +15,11 @@ backend    imports
 backend    lambdas
 backend    literals
 backend    loops
-ok         module_shape
+malformed  module_shape
 backend    null_handling
 backend    numeric_literals
 backend    operators
 ok         returns
 backend    typed
 
-3 ok / 0 frontend / 18 backend / 2 malformed
+2 ok / 0 frontend / 18 backend / 3 malformed

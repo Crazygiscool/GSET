@@ -388,6 +388,7 @@ fn transpile_directory(
         .map(|id| id.extension())
         .unwrap_or("txt");
 
+    let mut rust_modules = Vec::new();
     let mut overall_failed = project_failed;
     for (source, text, module, source_map, lowered_diagnostics) in &project_files {
         if sources.contains(source) {
@@ -431,7 +432,41 @@ fn transpile_directory(
         report(&output, verbose);
 
         let relative = source.strip_prefix(root).unwrap_or(source);
-        let mut destination_path = output_root.join(relative);
+        let module_name = if target == "rust" {
+            relative
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| {
+                    let mut out = s
+                        .chars()
+                        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                        .collect::<String>();
+                    if out == "main" {
+                        out = "entry_main".to_string();
+                    }
+                    if out.is_empty() {
+                        "module".to_string()
+                    } else if !out.chars().next().unwrap().is_ascii_alphabetic()
+                        && out.chars().next().unwrap() != '_'
+                    {
+                        format!("_{}", out)
+                    } else {
+                        out
+                    }
+                })
+                .unwrap_or_else(|| "module".to_string())
+        } else {
+            relative
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("module")
+                .to_string()
+        };
+        let mut destination_path = if target == "rust" {
+            output_root.join("src").join(format!("{}.rs", module_name))
+        } else {
+            output_root.join(relative)
+        };
         destination_path.set_extension(extension);
         if let Some(parent) = destination_path.parent()
             && let Err(error) = std::fs::create_dir_all(parent)
@@ -444,6 +479,9 @@ fn transpile_directory(
             eprintln!("gset: cannot write {}: {error}", destination_path.display());
             overall_failed = true;
             continue;
+        }
+        if target == "rust" && !overall_failed {
+            rust_modules.push(module_name.clone());
         }
     }
 
@@ -459,11 +497,47 @@ edition = "2024"
 
 [[bin]]
 name = "gset-rust-project"
-path = "main.rs"
+path = "src/main.rs"
 
 [dependencies]
 "#;
             let _ = std::fs::write(&cargo_manifest, manifest);
+            let src_root = output_root.join("src");
+            let _ = std::fs::create_dir_all(&src_root);
+            let mut main_source = String::new();
+            rust_modules.sort();
+            rust_modules.dedup();
+            for module in &rust_modules {
+                main_source.push_str(&format!(
+                    "mod {};
+",
+                    module
+                ));
+            }
+            if rust_modules.is_empty() {
+                main_source.push_str(
+                    "fn main() {}
+",
+                );
+            } else {
+                main_source.push_str(
+                    "
+fn main() {
+",
+                );
+                for module in &rust_modules {
+                    main_source.push_str(&format!(
+                        "    {}::main();
+",
+                        module
+                    ));
+                }
+                main_source.push_str(
+                    "}
+",
+                );
+            }
+            let _ = std::fs::write(src_root.join("main.rs"), &main_source);
         }
         let report_path = output_root.join("gset.port-report.txt");
         let generated_files = std::fs::read_dir(&output_root)

@@ -94,7 +94,7 @@ impl Backend for Rust {
             generator_mode: false,
             current_return_type: String::new(),
             clone_field_access: true,
-            locals: HashSet::new(),
+            locals: std::collections::HashMap::new(),
             diagnostics,
             writer,
         };
@@ -117,7 +117,7 @@ struct RustEmitter<'a> {
     generator_mode: bool,
     current_return_type: String,
     clone_field_access: bool,
-    locals: HashSet<String>,
+    locals: std::collections::HashMap<String, String>,
     diagnostics: &'a mut gset_ir::DiagnosticBag,
     writer: &'a mut CodeWriter,
 }
@@ -186,9 +186,17 @@ impl RustEmitter<'_> {
         if generator {
             self.writer.writeln("let mut __out = Vec::new();");
         }
-        for param in &function.params {
-            self.locals.insert(pattern_binding(param));
+        for (index, param) in function.params.iter().enumerate() {
+            let binding = pattern_binding(param);
+            let ty = function
+                .param_types
+                .get(index)
+                .and_then(|ty| ty.as_ref())
+                .map(rust_type)
+                .unwrap_or_else(|| "Value".to_string());
+            self.locals.insert(binding, ty);
         }
+
         let saved_return = self.current_return_type.clone();
         self.current_return_type = ret.clone();
         let saved = self.generator_mode;
@@ -210,9 +218,19 @@ impl RustEmitter<'_> {
             Stmt::Decl(decl) => {
                 if let Some(value) = &decl.value {
                     if let Some(binding) = decl.pattern.single_binding() {
-                        let value = self.expr(value);
+                        let target_ty = match &decl.ty {
+                            Some(ty) => rust_type(ty),
+                            None => rust_type(&value.ty),
+                        };
+                        let target_ty = if target_ty == "i64" {
+                            "Value".to_string()
+                        } else {
+                            target_ty
+                        };
+                        let value = wrap_rust_expr(&target_ty, &value.ty, self.expr(value));
+                        self.locals.insert(binding.to_string(), target_ty.clone());
                         self.writer
-                            .writeln(&format!("let mut {} = {};", binding, value));
+                            .writeln(&format!("let mut {}: {} = {};", binding, target_ty, value));
                     } else {
                         unsupported_marker(
                             self.diagnostics,
@@ -221,9 +239,9 @@ impl RustEmitter<'_> {
                         );
                     }
                 } else if let Some(binding) = decl.pattern.single_binding() {
-                    self.locals.insert(binding.to_string());
+                    self.locals.insert(binding.to_string(), "Value".to_string());
                     self.writer
-                        .writeln(&format!("let mut {}: i64 = 0;", binding));
+                        .writeln(&format!("let mut {}: Value = Value::Int(0);", binding));
                 }
             }
             Stmt::Expr(expr) => {
@@ -269,14 +287,20 @@ impl RustEmitter<'_> {
             } => {
                 if let PatternKind::Bind = target.kind {
                     let binding = pattern_binding(target);
-                    if self.locals.contains(&binding) {
-                        let assigned = self.expr(value);
+                    let local_type = self.locals.get(&binding).cloned();
+                    if let Some(target_type) = local_type {
+                        let assigned = wrap_rust_expr(&target_type, &value.ty, self.expr(value));
                         self.writer.writeln(&format!("{} = {};", binding, assigned));
                     } else {
-                        let assigned = self.expr(value);
+                        let target_ty = if rust_type(&value.ty) == "i64" {
+                            "Value".to_string()
+                        } else {
+                            rust_type(&value.ty)
+                        };
+                        let assigned = wrap_rust_expr(&target_ty, &value.ty, self.expr(value));
                         self.writer
                             .writeln(&format!("let mut {} = {};", binding, assigned));
-                        self.locals.insert(binding);
+                        self.locals.insert(binding, target_ty);
                     }
                     return;
                 }
@@ -386,7 +410,7 @@ impl RustEmitter<'_> {
                 } else {
                     format!("({})", bindings.join(", "))
                 };
-                let mutable_target = bindings.len() == 1 && self.locals.contains(&bindings[0]);
+                let mutable_target = bindings.len() == 1 && self.locals.contains_key(&bindings[0]);
                 // Whether the Rust loop variable must be mutable is decided by
                 // use before this point; Python variables are function-level,
                 // so this only marks a rebinding seen during normal emission.
@@ -1134,6 +1158,25 @@ fn text_of_expr(_expr: &Expr) -> String {
     "_".to_string()
 }
 
+fn wrap_rust_expr(target_type: &str, source_type: &gset_ir::Type, rendered: String) -> String {
+    match target_type {
+        "Value" => match *source_type {
+            Type::Int(_) => format!("Value::Int({})", rendered),
+            Type::Float => format!("Value::Float({})", rendered),
+            Type::Bool => format!("Value::Bool({})", rendered),
+            Type::Str | Type::StrLit => format!("Value::Str({})", rendered),
+            Type::List { .. } | Type::Tuple(_) | Type::Set(_) => {
+                format!("Value::List({})", rendered)
+            }
+            Type::Map(_) | Type::OrderedMap { .. } => format!("Value::Map({})", rendered),
+            Type::Unknown(_) => rendered,
+            _ => format!("Value::Int({})", rendered),
+        },
+        value if value == rust_type(source_type) => rendered,
+        _ => rendered,
+    }
+}
+
 fn pattern_binding(pattern: &Pattern) -> String {
     pattern
         .single_binding()
@@ -1511,7 +1554,7 @@ fn emit_class(
                         generator_mode: false,
                         current_return_type: "Value".to_string(),
                         clone_field_access: true,
-                        locals: HashSet::new(),
+                        locals: std::collections::HashMap::new(),
                         diagnostics,
                         writer,
                     };
@@ -1573,7 +1616,7 @@ fn emit_class(
             generator_mode: false,
             current_return_type: "Value".to_string(),
             clone_field_access: true,
-            locals: HashSet::new(),
+            locals: std::collections::HashMap::new(),
             diagnostics,
             writer,
         };
