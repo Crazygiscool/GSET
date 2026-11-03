@@ -996,14 +996,14 @@ fn emit_class(
     writer.writeln(&format!("struct {} {{", class.name));
     writer.indent();
     if fields.is_empty() {
-        writer.writeln("_: ()");
+        writer.writeln("");
     } else {
         for (name, ty) in &fields {
             let ty = ty
                 .as_ref()
                 .map(rust_type)
                 .unwrap_or_else(|| "i64".to_string());
-            writer.writeln(&format!("{}: {}", name, ty));
+            writer.writeln(&format!("{}: {},", name, ty));
         }
     }
     writer.dedent();
