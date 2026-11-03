@@ -87,6 +87,7 @@ impl Backend for Rust {
             classes: class_names.clone(),
             self_name: "self".to_string(),
             generator_mode: false,
+            locals: HashSet::new(),
             diagnostics,
             writer,
         };
@@ -107,6 +108,7 @@ struct RustEmitter<'a> {
     classes: HashSet<String>,
     self_name: String,
     generator_mode: bool,
+    locals: HashSet<String>,
     diagnostics: &'a mut gset_ir::DiagnosticBag,
     writer: &'a mut CodeWriter,
 }
@@ -174,13 +176,16 @@ impl RustEmitter<'_> {
         if generator {
             self.writer.writeln("let mut __out = Vec::new();");
         }
+        for param in &function.params {
+            self.locals.insert(pattern_binding(param));
+        }
         let saved = self.generator_mode;
         self.generator_mode = generator;
         self.emit_block(&function.body);
         self.generator_mode = saved;
         if generator {
             self.writer.writeln("__out");
-        } else {
+        } else if !body_ends_in_return(&function.body) {
             self.writer.writeln("Default::default()");
         }
         self.writer.dedent();
@@ -203,6 +208,7 @@ impl RustEmitter<'_> {
                         );
                     }
                 } else if let Some(binding) = decl.pattern.single_binding() {
+                    self.locals.insert(binding.to_string());
                     self.writer
                         .writeln(&format!("let mut {}: i64 = 0;", binding));
                 }
@@ -250,8 +256,15 @@ impl RustEmitter<'_> {
             } => {
                 if let PatternKind::Bind = target.kind {
                     let binding = pattern_binding(target);
-                    let assigned = self.expr(value);
-                    self.writer.writeln(&format!("{} = {};", binding, assigned));
+                    if self.locals.contains(&binding) {
+                        let assigned = self.expr(value);
+                        self.writer.writeln(&format!("{} = {};", binding, assigned));
+                    } else {
+                        let assigned = self.expr(value);
+                        self.writer
+                            .writeln(&format!("let mut {} = {};", binding, assigned));
+                        self.locals.insert(binding);
+                    }
                     return;
                 }
                 if let PatternKind::Location(expr) = &target.kind {
@@ -484,6 +497,117 @@ impl RustEmitter<'_> {
         {
             return self.self_name.clone();
         }
+        if let ExprKind::Call { callee, args, .. } = &expr.kind {
+            if let ExprKind::Path(path) = &callee.kind
+                && path.is_bare()
+            {
+                match path.segments.first().map(|s| s.as_ref()) {
+                    Some("len") if args.len() == 1 => {
+                        let arg = self.expr(&args[0]);
+                        match args[0].ty {
+                            Type::Str | Type::StrLit | Type::Char => {
+                                return format!("{}.chars().count()", arg);
+                            }
+                            _ => return format!("{}.len()", arg),
+                        }
+                    }
+                    Some("abs") if args.len() == 1 => {
+                        let arg = self.expr(&args[0]);
+                        return format!("{}.abs()", arg);
+                    }
+                    Some("min") if args.len() >= 2 => {
+                        let first = self.expr(&args[0]);
+                        let second = self.expr(&args[1]);
+                        return format!("{}.min({})", first, second);
+                    }
+                    Some("max") if args.len() >= 2 => {
+                        let first = self.expr(&args[0]);
+                        let second = self.expr(&args[1]);
+                        return format!("{}.max({})", first, second);
+                    }
+                    Some("str") if args.len() == 1 => {
+                        let arg = self.expr(&args[0]);
+                        return format!("{}.to_string()", arg);
+                    }
+                    Some("float") if args.len() == 1 => {
+                        let arg = self.expr(&args[0]);
+                        return match args[0].ty {
+                            Type::Float => arg,
+                            _ => format!("({}) as f64", arg),
+                        };
+                    }
+                    Some("int") if args.len() == 1 => {
+                        let arg = self.expr(&args[0]);
+                        return match args[0].ty {
+                            Type::Int(_) => arg,
+                            Type::Float => format!("({}) as i64", arg),
+                            _ => format!("({}) as i64", arg),
+                        };
+                    }
+                    Some("chr") if args.len() == 1 => {
+                        let arg = self.expr(&args[0]);
+                        return format!("char::from_u32({} as u32).unwrap_or('\x00')", arg);
+                    }
+                    Some("ord") if args.len() == 1 => {
+                        let arg = self.expr(&args[0]);
+                        return format!("{}.encode().next().unwrap_or(0)", arg);
+                    }
+                    Some("sum") if args.len() == 1 => {
+                        let arg = self.expr(&args[0]);
+                        return format!("{}.iter().sum::<i64>()", arg);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+            named_args,
+            ..
+        } = &expr.kind
+        {
+            if named_args.is_empty() {
+                match method.as_ref() {
+                    "upper" | "to_uppercase" => {
+                        let receiver = self.expr(receiver);
+                        return format!("{}.to_uppercase()", receiver);
+                    }
+                    "lower" | "to_lowercase" => {
+                        let receiver = self.expr(receiver);
+                        return format!("{}.to_lowercase()", receiver);
+                    }
+                    "strip" | "trim" => {
+                        let receiver = self.expr(receiver);
+                        return format!("{}.trim().to_string()", receiver);
+                    }
+                    "len" => {
+                        let ty = receiver.ty.clone();
+                        let receiver = self.expr(receiver);
+                        return match ty {
+                            Type::Str | Type::StrLit | Type::Char => {
+                                format!("{}.chars().count()", receiver)
+                            }
+                            _ => format!("{}.len()", receiver),
+                        };
+                    }
+                    "get" if args.len() <= 1 => {
+                        let receiver = self.expr(receiver);
+                        let key = if args.is_empty() {
+                            "String::from(\"\")".to_string()
+                        } else {
+                            self.expr(&args[0])
+                        };
+                        return format!(
+                            r#"{}.get(&{}).cloned().unwrap_or_default()"#,
+                            receiver, key
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
         match &expr.kind {
             ExprKind::Literal(literal) => match literal {
                 Literal::Int(value) => value.clone(),
@@ -536,8 +660,19 @@ impl RustEmitter<'_> {
                     BinaryOp::ShiftRight => ">>",
                     _ => return unsupported_expr(self.diagnostics, expr.span),
                 };
-                let lhs = self.expr(lhs);
-                let rhs = self.expr(rhs);
+                let has_float = matches!(lhs.ty, Type::Float) || matches!(rhs.ty, Type::Float);
+                let lhs_type = lhs.ty.clone();
+                let rhs_type = rhs.ty.clone();
+                let lhs = if has_float && matches!(lhs_type, Type::Int(_) | Type::Bool) {
+                    format!("({}) as f64", self.expr(lhs))
+                } else {
+                    self.expr(lhs)
+                };
+                let rhs = if has_float && matches!(rhs_type, Type::Int(_) | Type::Bool) {
+                    format!("({}) as f64", self.expr(rhs))
+                } else {
+                    self.expr(rhs)
+                };
                 format!("{} {} {}", lhs, op, rhs)
             }
             ExprKind::Compare { op, lhs, rhs } => {
@@ -868,6 +1003,10 @@ fn function_has_yield(function: &Function) -> bool {
     block_has_yield(&function.body)
 }
 
+fn body_ends_in_return(block: &gset_ir::Block) -> bool {
+    matches!(block.statements.last(), Some(gset_ir::Stmt::Return { .. }))
+}
+
 fn pattern_binding(pattern: &Pattern) -> String {
     pattern
         .single_binding()
@@ -894,6 +1033,7 @@ fn rust_type(ty: &Type) -> String {
             rust_type(key),
             rust_type(value)
         ),
+        Type::Tuple(elements) if elements.len() == 1 => rust_type(&elements[0]),
         Type::Tuple(elements) => format!(
             "({})",
             elements
@@ -901,6 +1041,7 @@ fn rust_type(ty: &Type) -> String {
                 .map(rust_type)
                 .collect::<Vec<_>>()
                 .join(", ")
+                + ","
         ),
         _ => "i64".to_string(),
     }
@@ -1057,6 +1198,7 @@ fn emit_class(
                         classes: HashSet::new(),
                         self_name: "__self".to_string(),
                         generator_mode: false,
+                        locals: HashSet::new(),
                         diagnostics,
                         writer,
                     };
@@ -1116,6 +1258,7 @@ fn emit_class(
             classes: HashSet::new(),
             self_name: "self".to_string(),
             generator_mode: false,
+            locals: HashSet::new(),
             diagnostics,
             writer,
         };
