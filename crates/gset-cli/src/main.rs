@@ -465,6 +465,20 @@ path = "main.rs"
 "#;
             let _ = std::fs::write(&cargo_manifest, manifest);
         }
+        let report_path = output_root.join("gset.port-report.txt");
+        let generated_files = std::fs::read_dir(&output_root)
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry.is_ok())
+            .count();
+        let report_text = format!(
+            "GSET port report\nsource_root: {}\ntarget: {}\ngenerated files: {}\n",
+            root.display(),
+            target,
+            generated_files
+        );
+        let _ = std::fs::write(&report_path, report_text);
+        eprintln!("gset: migration report: {}", report_path.display());
         write_content_hash(&output_root, content_hash);
         ExitCode::SUCCESS
     }
