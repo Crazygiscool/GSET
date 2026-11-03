@@ -658,7 +658,7 @@ impl RustEmitter<'_> {
                     "get" if args.len() <= 1 => {
                         let receiver = self.expr(receiver);
                         let key = if args.is_empty() {
-                            "String::from(\"\")".to_string()
+                            "\"\"".to_string()
                         } else {
                             self.expr(&args[0])
                         };
@@ -666,6 +666,24 @@ impl RustEmitter<'_> {
                             r#"{}.get(&{}).cloned().unwrap_or(Value::Null).as_int()"#,
                             receiver, key
                         );
+                    }
+                    "split" if args.len() == 1 => {
+                        let receiver = self.expr(receiver);
+                        let arg = self.expr(&args[0]);
+                        return format!(
+                            "{}.split(&{}).map(String::from).collect::<Vec<_>>()",
+                            receiver, arg
+                        );
+                    }
+                    "startswith" if args.len() == 1 => {
+                        let receiver = self.expr(receiver);
+                        let arg = self.expr(&args[0]);
+                        return format!("{}.starts_with({}.as_str())", receiver, arg);
+                    }
+                    "endswith" if args.len() == 1 => {
+                        let receiver = self.expr(receiver);
+                        let arg = self.expr(&args[0]);
+                        return format!("{}.ends_with({}.as_str())", receiver, arg);
                     }
                     _ => {}
                 }
