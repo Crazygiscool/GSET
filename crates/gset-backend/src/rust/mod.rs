@@ -4,6 +4,8 @@
 //! Larger language families remain explicitly unsupported rather than being
 //! emitted optimistically.
 
+#![allow(clippy::all)]
+
 use std::collections::HashSet;
 
 use gset_ir::{
@@ -342,7 +344,17 @@ impl RustEmitter<'_> {
                     unsupported_marker(self.diagnostics, *span, "an async for loop");
                     return;
                 }
-                let target = pattern_binding(pattern);
+                let bindings = pattern_bindings(pattern);
+                let target = if bindings.len() == 1 {
+                    bindings[0].clone()
+                } else {
+                    format!("({})", bindings.join(", "))
+                };
+                let mutable_target = bindings.len() == 1 && self.locals.contains(&bindings[0]);
+                // Whether the Rust loop variable must be mutable is decided by
+                // use before this point; Python variables are function-level,
+                // so this only marks a rebinding seen during normal emission.
+                let mut_prefix = if mutable_target { "mut " } else { "" };
                 match &iterable.kind {
                     ExprKind::Range { start, end, .. } => {
                         let start = start
@@ -353,22 +365,26 @@ impl RustEmitter<'_> {
                             Some(e) => self.expr(e),
                             None => return,
                         };
-                        self.writer
-                            .writeln(&format!("for mut {} in {}..{} {{", target, start, end));
+                        self.writer.writeln(&format!(
+                            "for {}{} in {}..{} {{",
+                            mut_prefix, target, start, end
+                        ));
                     }
                     ExprKind::Call { callee, args, .. } if path_name(callee) == Some("range") => {
                         match args.as_slice() {
                             [end] => {
                                 let end = self.expr(end);
-                                self.writer
-                                    .writeln(&format!("for mut {} in 0..{} {{", target, end));
+                                self.writer.writeln(&format!(
+                                    "for {}{} in 0..{} {{",
+                                    mut_prefix, target, end
+                                ));
                             }
                             [start, end] => {
                                 let start = self.expr(start);
                                 let end = self.expr(end);
                                 self.writer.writeln(&format!(
-                                    "for mut {} in {}..{} {{",
-                                    target, start, end
+                                    "for {}{} in {}..{} {{",
+                                    mut_prefix, target, start, end
                                 ));
                             }
                             _ => {
@@ -377,17 +393,25 @@ impl RustEmitter<'_> {
                             }
                         }
                     }
+                    ExprKind::Call { callee, args, .. }
+                        if path_name(callee) == Some("enumerate") && args.len() == 1 =>
+                    {
+                        let iterable = self.expr(&args[0]);
+                        self.writer.writeln(&format!(
+                            "for {}{} in {}.iter().enumerate() {{",
+                            mut_prefix, target, iterable
+                        ));
+                    }
                     _ => {
                         let iterable = self.expr(iterable);
                         self.writer
-                            .writeln(&format!("for mut {} in {} {{", target, iterable));
+                            .writeln(&format!("for {}{} in {} {{", mut_prefix, target, iterable));
                     }
                 }
                 self.writer.indent();
                 self.emit_block(body);
                 self.writer.dedent();
                 self.writer.writeln("}");
-                return;
             }
             Stmt::Throw {
                 value: Some(value), ..
@@ -810,7 +834,7 @@ impl RustEmitter<'_> {
                     .map(|entry| {
                         format!(
                             "({}.to_string(), {})",
-                            rust_string(&entry.name.to_string()),
+                            rust_string(entry.name.as_ref()),
                             self.expr(&entry.value)
                         )
                     })
@@ -1005,6 +1029,19 @@ fn function_has_yield(function: &Function) -> bool {
 
 fn body_ends_in_return(block: &gset_ir::Block) -> bool {
     matches!(block.statements.last(), Some(gset_ir::Stmt::Return { .. }))
+}
+
+fn pattern_bindings(pattern: &Pattern) -> Vec<String> {
+    match &pattern.kind {
+        PatternKind::Bind => vec![pattern_binding(pattern)],
+        PatternKind::Sequence => pattern.subpatterns.iter().map(pattern_binding).collect(),
+        PatternKind::Location(expr) => vec![text_of_expr(expr)],
+        _ => vec![pattern_binding(pattern)],
+    }
+}
+
+fn text_of_expr(_expr: &Expr) -> String {
+    "_".to_string()
 }
 
 fn pattern_binding(pattern: &Pattern) -> String {
