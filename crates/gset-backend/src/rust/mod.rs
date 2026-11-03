@@ -301,9 +301,13 @@ impl RustEmitter<'_> {
                     match ty {
                         gset_ir::Type::Int(_) => format!("Value::Int({})", rendered),
                         gset_ir::Type::Bool => format!("Value::Bool({})", rendered),
-                        gset_ir::Type::Str | gset_ir::Type::StrLit => format!("Value::Str({})", rendered),
+                        gset_ir::Type::Str | gset_ir::Type::StrLit => {
+                            format!("Value::Str({})", rendered)
+                        }
                         gset_ir::Type::Float => format!("Value::Float({})", rendered),
-                        gset_ir::Type::List { .. } | gset_ir::Type::Tuple(_) | gset_ir::Type::Set(_) => format!("Value::List({})", rendered),
+                        gset_ir::Type::List { .. }
+                        | gset_ir::Type::Tuple(_)
+                        | gset_ir::Type::Set(_) => format!("Value::List({})", rendered),
                         gset_ir::Type::Map(_) | gset_ir::Type::OrderedMap { .. } => {
                             format!("Value::Map({})", rendered)
                         }
@@ -1153,9 +1157,7 @@ fn rust_type(ty: &Type) -> String {
     }
 }
 
-
 fn rust_uses_unknown(module: &Module) -> bool {
-    use gset_ir::Module;
     fn type_uses_unknown(ty: &gset_ir::Type) -> bool {
         match ty {
             gset_ir::Type::Unknown(_) => true,
@@ -1190,7 +1192,12 @@ fn rust_uses_unknown(module: &Module) -> bool {
                 gset_ir::ExprKind::Call { callee, args, .. } => {
                     expr_uses_unknown(callee) || args.iter().any(expr_uses_unknown)
                 }
-                gset_ir::ExprKind::MethodCall { receiver, args, named_args, .. } => {
+                gset_ir::ExprKind::MethodCall {
+                    receiver,
+                    args,
+                    named_args,
+                    ..
+                } => {
                     expr_uses_unknown(receiver)
                         || args.iter().any(expr_uses_unknown)
                         || named_args.iter().any(|arg| expr_uses_unknown(&arg.value))
@@ -1202,17 +1209,27 @@ fn rust_uses_unknown(module: &Module) -> bool {
                 gset_ir::ExprKind::List { elements }
                 | gset_ir::ExprKind::Tuple { elements }
                 | gset_ir::ExprKind::Set { elements } => elements.iter().any(expr_uses_unknown),
-                gset_ir::ExprKind::Map { entries } => entries
-                    .iter()
-                    .any(|entry| expr_uses_unknown(&entry.value)),
-                gset_ir::ExprKind::Slice { target, start, end, step, .. } => {
+                gset_ir::ExprKind::Map { entries } => {
+                    entries.iter().any(|entry| expr_uses_unknown(&entry.value))
+                }
+                gset_ir::ExprKind::Slice {
+                    target,
+                    start,
+                    end,
+                    step,
+                    ..
+                } => {
                     expr_uses_unknown(target)
                         || start.as_ref().is_some_and(|value| expr_uses_unknown(value))
                         || end.as_ref().is_some_and(|value| expr_uses_unknown(value))
                         || step.as_ref().is_some_and(|value| expr_uses_unknown(value))
                 }
                 gset_ir::ExprKind::Lambda { body, .. } => expr_uses_unknown(body),
-                gset_ir::ExprKind::Conditional { condition, then_branch, else_branch } => {
+                gset_ir::ExprKind::Conditional {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
                     expr_uses_unknown(condition)
                         || expr_uses_unknown(then_branch)
                         || expr_uses_unknown(else_branch)
@@ -1231,24 +1248,39 @@ fn rust_uses_unknown(module: &Module) -> bool {
             }
             Stmt::Expr(expr) => expr_uses_unknown(expr),
             Stmt::Assign { value, .. } => expr_uses_unknown(value),
-            Stmt::Return { value: Some(expr), .. } => expr_uses_unknown(expr),
-            Stmt::If { condition, then_branch, else_branch, .. } => {
+            Stmt::Return {
+                value: Some(expr), ..
+            } => expr_uses_unknown(expr),
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 expr_uses_unknown(condition)
                     || then_branch.statements.iter().any(stmt_uses_unknown)
                     || else_branch
                         .as_ref()
                         .map(|branch| match branch.as_ref() {
-                            gset_ir::Else::Block(block) => block.statements.iter().any(stmt_uses_unknown),
+                            gset_ir::Else::Block(block) => {
+                                block.statements.iter().any(stmt_uses_unknown)
+                            }
                             gset_ir::Else::If(statement) => stmt_uses_unknown(statement),
                         })
                         .unwrap_or(false)
             }
-            Stmt::While { condition, body, .. } => {
-                expr_uses_unknown(condition)
-                    || body.statements.iter().any(stmt_uses_unknown)
-            }
-            Stmt::For { init, condition, update, body, .. } => {
-                init.as_ref().is_some_and(|statement| stmt_uses_unknown(statement))
+            Stmt::While {
+                condition, body, ..
+            } => expr_uses_unknown(condition) || body.statements.iter().any(stmt_uses_unknown),
+            Stmt::For {
+                init,
+                condition,
+                update,
+                body,
+                ..
+            } => {
+                init.as_ref()
+                    .is_some_and(|statement| stmt_uses_unknown(statement))
                     || condition.as_ref().is_some_and(expr_uses_unknown)
                     || update.as_ref().is_some_and(expr_uses_unknown)
                     || body.statements.iter().any(stmt_uses_unknown)
@@ -1257,52 +1289,55 @@ fn rust_uses_unknown(module: &Module) -> bool {
                 expr_uses_unknown(iterable) || body.statements.iter().any(stmt_uses_unknown)
             }
             Stmt::Block(block) => block.statements.iter().any(stmt_uses_unknown),
-            Stmt::Try { body, handlers, finally, .. } => {
+            Stmt::Try {
+                body,
+                handlers,
+                finally,
+                ..
+            } => {
                 body.statements.iter().any(stmt_uses_unknown)
-                    || handlers.iter().any(|handler| handler.body.statements.iter().any(stmt_uses_unknown))
-                    || finally.as_ref().is_some_and(|block| block.statements.iter().any(stmt_uses_unknown))
+                    || handlers
+                        .iter()
+                        .any(|handler| handler.body.statements.iter().any(stmt_uses_unknown))
+                    || finally
+                        .as_ref()
+                        .is_some_and(|block| block.statements.iter().any(stmt_uses_unknown))
             }
             _ => false,
         }
     }
-    module
-        .items
-        .iter()
-        .any(|item| match item {
-            Item::Function(function) => {
-                function
-                    .params
-                    .iter()
-                    .any(|pattern| pattern.names.iter().any(|_| false))
-                    || function.ret.as_ref().is_some_and(type_uses_unknown)
-                    || function.body.statements.iter().any(stmt_uses_unknown)
+    module.items.iter().any(|item| match item {
+        Item::Function(function) => {
+            function
+                .params
+                .iter()
+                .any(|pattern| pattern.names.iter().any(|_| false))
+                || function.ret.as_ref().is_some_and(type_uses_unknown)
+                || function.body.statements.iter().any(stmt_uses_unknown)
+        }
+        Item::Global(variable) => {
+            if let Some(value) = &variable.value {
+                type_uses_unknown(&variable.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN))
+                    || expr_uses_unknown(value)
+            } else {
+                type_uses_unknown(&variable.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN))
             }
-            Item::Global(variable) => {
-                if let Some(value) = &variable.value {
-                    type_uses_unknown(&variable.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN))
-                        || expr_uses_unknown(value)
-                } else {
-                    type_uses_unknown(&variable.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN))
-                }
-            }
-            Item::Class(class) => {
-                class.fields.iter().any(|field| {
-                    field
-                        .ty
-                        .as_ref()
-                        .is_some_and(type_uses_unknown)
-                        || field.value.as_ref().is_some_and(expr_uses_unknown)
-                }) || class.methods.iter().any(|method| {
-                    method.ret.as_ref().is_some_and(type_uses_unknown)
-                        || method.body.statements.iter().any(stmt_uses_unknown)
-                }) || class.constructors.iter().any(|ctor| {
-                    ctor.ret.as_ref().is_some_and(type_uses_unknown)
-                        || ctor.body.statements.iter().any(stmt_uses_unknown)
-                })
-            }
-            Item::Stmt(statement) => stmt_uses_unknown(statement),
-            _ => false,
-        })
+        }
+        Item::Class(class) => {
+            class.fields.iter().any(|field| {
+                field.ty.as_ref().is_some_and(type_uses_unknown)
+                    || field.value.as_ref().is_some_and(expr_uses_unknown)
+            }) || class.methods.iter().any(|method| {
+                method.ret.as_ref().is_some_and(type_uses_unknown)
+                    || method.body.statements.iter().any(stmt_uses_unknown)
+            }) || class.constructors.iter().any(|ctor| {
+                ctor.ret.as_ref().is_some_and(type_uses_unknown)
+                    || ctor.body.statements.iter().any(stmt_uses_unknown)
+            })
+        }
+        Item::Stmt(statement) => stmt_uses_unknown(statement),
+        _ => false,
+    })
 }
 
 fn emit_import(diagnostics: &mut gset_ir::DiagnosticBag, import: &gset_ir::Import) {
@@ -1756,8 +1791,7 @@ impl std::ops::Shr<i64> for Value {
         }
     }
 }
-"#
-;
+"#;
 fn emit_runtime(writer: &mut CodeWriter) {
     writer.write(RUST_TARGET_RUNTIME);
     writer.newline();

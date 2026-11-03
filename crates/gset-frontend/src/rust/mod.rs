@@ -2,9 +2,9 @@
 
 use crate::Frontend;
 use gset_ir::{
-    BinaryOp, Block, ComparisonOp, DiagnosticBag, Else, Expr, ExprKind, Function, Item, LangId,
-    Literal, LogicalOp, Lowered, Module, Name, Pattern, SourceId, SourceMap, Span, Stmt, UnaryOp,
-    VarDecl,
+    BinaryOp, Block, Class, ComparisonOp, DiagnosticBag, Else, Expr, ExprKind, Function, Item,
+    LangId, Literal, LogicalOp, Lowered, Module, Name, Pattern, SourceId, SourceMap, Span, Stmt,
+    UnaryOp, VarDecl,
 };
 use std::sync::Arc;
 
@@ -59,7 +59,16 @@ impl Frontend for Rust {
             if let Some(child) = root.child(ci) {
                 match child.kind() {
                     "function_item" => {
-                        if let Some(item) = lower_function(child, id, text) {
+                        let is_main = child
+                            .child_by_field_name("name")
+                            .map(|node| text_of(node, text) == "main")
+                            .unwrap_or(false);
+                        if is_main {
+                            if let Some(body_node) = child.child_by_field_name("body") {
+                                let body = lower_block(body_node, id, text);
+                                items.extend(body.statements.into_iter().map(Item::Stmt));
+                            }
+                        } else if let Some(item) = lower_function(child, id, text) {
                             items.push(item);
                         }
                     }
@@ -68,6 +77,75 @@ impl Frontend for Rust {
                             items.push(item);
                         }
                     }
+                    "struct_item" => {
+                        if let Some(item) = lower_rust_struct(child, id, text) {
+                            if let Item::Class(mut class) = item {
+                                let mut next = ci + 1;
+                                while next < root.child_count() {
+                                    let Some(impl_node) = root.child(next) else {
+                                        break;
+                                    };
+                                    if impl_node.kind() != "impl_item" {
+                                        break;
+                                    }
+                                    let type_name = impl_node
+                                        .child_by_field_name("type")
+                                        .or_else(|| {
+                                            (0..impl_node.child_count())
+                                                .filter_map(|i| impl_node.child(i))
+                                                .find(|n| n.kind() == "type_identifier")
+                                        })
+                                        .map(|n| text_of(n, text));
+                                    if type_name == Some(class.name.as_ref()) {
+                                        for mut method in lower_rust_impl(impl_node, id, text) {
+                                            if method.name.to_string() == "new" {
+                                                method.name = Arc::from("__init__");
+                                                method.params.insert(
+                                                    0,
+                                                    Pattern::bind(Arc::from("self"), method.span),
+                                                );
+                                                class.constructors.push(method);
+                                            } else {
+                                                class.methods.push(method);
+                                            }
+                                        }
+                                        next += 1;
+                                        continue;
+                                    }
+                                    break;
+                                }
+                                items.push(Item::Class(class));
+                                ci = next.saturating_sub(1);
+                            }
+                        }
+                    }
+                    "impl_item" => {}
+                    "mod_item" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            items.push(Item::Import(gset_ir::Import::module(
+                                gset_ir::Path::single(Arc::from(text_of(name_node, text))),
+                                span_of(child, id),
+                            )));
+                        }
+                    }
+                    "use_declaration" => {
+                        if let Some(textnode) = (0..child.child_count())
+                            .filter_map(|i| child.child(i))
+                            .find(|n| {
+                                matches!(n.kind(), "scoped_identifier" | "identifier" | "path")
+                            })
+                        {
+                            let root_name = text_of(textnode, text)
+                                .split("::")
+                                .next()
+                                .unwrap_or("Unknown");
+                            items.push(Item::Import(gset_ir::Import::module(
+                                gset_ir::Path::single(Arc::from(root_name)),
+                                span_of(child, id),
+                            )));
+                        }
+                    }
+                    "enum_item" | "trait_item" => {}
                     _ => {}
                 }
             }
@@ -109,6 +187,76 @@ fn first_identifier(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
     None
 }
 
+fn lower_rust_struct(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Item> {
+    let name = node
+        .child_by_field_name("name")
+        .map(|n| Arc::from(text_of(n, text)))?;
+    let mut fields = Vec::new();
+    for i in 0..node.child_count() {
+        let child = node.child(i)?;
+        if child.kind() != "field_declaration_list" {
+            continue;
+        }
+        for j in 0..child.child_count() {
+            if let Some(field) = child.child(j) {
+                if field.kind() == "field_declaration" {
+                    if let Some(name_node) = field.child_by_field_name("name") {
+                        fields.push(VarDecl {
+                            pattern: Pattern::bind(
+                                Arc::from(text_of(name_node, text)),
+                                span_of(name_node, source),
+                            ),
+                            ty: None,
+                            value: None,
+                            mutable: false,
+                            exported: false,
+                            span: span_of(field, source),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Some(Item::Class(Class {
+        name,
+        decorators: Vec::new(),
+        extends: None,
+        implements: Vec::new(),
+        fields,
+        constructors: Vec::new(),
+        methods: Vec::new(),
+        generics: Vec::new(),
+        exported: false,
+        span: span_of(node, source),
+    }))
+}
+
+fn lower_rust_impl(node: tree_sitter::Node, source: SourceId, text: &str) -> Vec<Function> {
+    let mut functions = Vec::new();
+    if let Some(body) = node.child_by_field_name("body") {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "function_item" {
+                    if let Some(Item::Function(function)) = lower_function(child, source, text) {
+                        functions.push(function);
+                    }
+                }
+            }
+        }
+    } else {
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if child.kind() == "function_item" {
+                    if let Some(Item::Function(function)) = lower_function(child, source, text) {
+                        functions.push(function);
+                    }
+                }
+            }
+        }
+    }
+    functions
+}
+
 fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<Item> {
     let name_node = node.child_by_field_name("name")?;
     let name: Name = Arc::from(text_of(name_node, text));
@@ -117,10 +265,9 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
         let mut i = 0;
         while i < params_node.child_count() {
             if let Some(param) = params_node.child(i) {
-                if param.kind() == "parameter"
-                    || param.kind() == "self_parameter"
-                    || param.kind() == "variadic_parameter"
-                {
+                if param.kind() == "self_parameter" {
+                    params.push(Pattern::bind(Arc::from("self"), span_of(param, source)));
+                } else if param.kind() == "parameter" || param.kind() == "variadic_parameter" {
                     if let Some(name_node) = first_identifier(param) {
                         params.push(Pattern::bind(
                             Arc::from(text_of(name_node, text)),
@@ -134,11 +281,38 @@ fn lower_function(node: tree_sitter::Node, source: SourceId, text: &str) -> Opti
     }
     let body_node = node.child_by_field_name("body")?;
     let mut body = lower_block(body_node, source, text);
-    if let Some(gset_ir::Stmt::Expr(expr)) = body.statements.pop() {
-        body.statements.push(gset_ir::Stmt::Return {
-            value: Some(expr),
-            span: span_of(body_node, source),
-        });
+    if name.to_string() == "new" {
+        if let Some(gset_ir::Stmt::Expr(expr)) = body.statements.last() {
+            if let ExprKind::StructLit { fields, .. } = &expr.kind {
+                let fields = fields.clone();
+                body.statements.pop();
+                for field in &fields {
+                    let target_expr = Expr::new(
+                        ExprKind::Field {
+                            target: Box::new(Expr::new(
+                                ExprKind::Path(gset_ir::Path::single(Arc::from("self"))),
+                                span_of(body_node, source),
+                            )),
+                            field: field.name.clone(),
+                        },
+                        span_of(body_node, source),
+                    );
+                    body.statements.push(Stmt::Assign {
+                        target: Pattern::location(target_expr, span_of(body_node, source)),
+                        value: field.value.clone(),
+                        span: span_of(body_node, source),
+                    });
+                }
+            }
+        }
+    }
+    if matches!(body.statements.last(), Some(gset_ir::Stmt::Expr(_))) {
+        if let Some(gset_ir::Stmt::Expr(expr)) = body.statements.pop() {
+            body.statements.push(gset_ir::Stmt::Return {
+                value: Some(expr),
+                span: span_of(body_node, source),
+            });
+        }
     }
     Some(Item::Function(Function {
         name,
@@ -372,8 +546,71 @@ fn named_child(node: tree_sitter::Node, index: usize) -> Option<tree_sitter::Nod
 
 fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
     let span = span_of(node, source);
+    if node.kind() == "scoped_identifier" {
+        let text = text_of(node, text);
+        if text.ends_with("::new") {
+            let type_name = text.split("::").next().unwrap_or(text).to_string();
+            return Expr::new(
+                ExprKind::Path(gset_ir::Path::single(Arc::from(type_name))),
+                span,
+            );
+        }
+    }
+    if node.kind() == "struct_expression" {
+        let name = (0..node.child_count())
+            .filter_map(|i| node.child(i))
+            .find(|child| child.kind() == "type_identifier")
+            .map(|child| text_of(child, text).to_string())
+            .unwrap_or_default();
+        let list = (0..node.child_count())
+            .filter_map(|i| node.child(i))
+            .find(|child| child.kind() == "field_initializer_list")
+            .unwrap_or(node);
+        let mut fields = Vec::new();
+        let mut i = 0;
+        while i < list.child_count() {
+            if let Some(field) = list.child(i) {
+                match field.kind() {
+                    "field_initializer" => {
+                        let field_name = field
+                            .child_by_field_name("name")
+                            .map(|n| text_of(n, text))
+                            .unwrap_or("");
+                        let value_node = field.child_by_field_name("value");
+                        if let Some(value_node) = value_node {
+                            let value = lower_expr(value_node, source, text);
+                            fields.push(gset_ir::NamedArg {
+                                name: gset_ir::Name::from(field_name.to_string()),
+                                value,
+                            });
+                        }
+                    }
+                    "shorthand_field_initializer" => {
+                        let field_name = text_of(field, text).to_string();
+                        let value = Expr::new(
+                            ExprKind::Path(gset_ir::Path::single(Arc::from(field_name.clone()))),
+                            span,
+                        );
+                        fields.push(gset_ir::NamedArg {
+                            name: gset_ir::Name::from(field_name),
+                            value,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+        return Expr::new(
+            ExprKind::StructLit {
+                path: gset_ir::Path::single(Arc::from(name)),
+                fields,
+            },
+            span,
+        );
+    }
     match node.kind() {
-        "identifier" => Expr::new(
+        "identifier" | "self" => Expr::new(
             ExprKind::Path(gset_ir::Path::single(Arc::from(text_of(node, text)))),
             span,
         ),
@@ -861,6 +1098,120 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 i += 1;
             }
             Expr::new(ExprKind::List { elements }, span)
+        }
+        "macro_invocation" => {
+            let mut name = "";
+            let mut ci = 0;
+            while ci < node.child_count() {
+                if let Some(child) = node.child(ci) {
+                    if child.kind() == "identifier" {
+                        name = text_of(child, text);
+                        break;
+                    }
+                }
+                ci += 1;
+            }
+            let mut args = Vec::new();
+            if name == "println" || name == "print" {
+                let macro_text = text_of(node, text);
+                if let Some(open) = macro_text.find('(') {
+                    if let Some(close) = macro_text.rfind(')') {
+                        let content = &macro_text[open + 1..close];
+                        let mut comma = None;
+                        let mut in_string = false;
+                        let mut depth = 0usize;
+                        let mut quote_escape = false;
+                        for (offset, byte) in content.as_bytes().iter().enumerate() {
+                            if in_string {
+                                if quote_escape {
+                                    quote_escape = false;
+                                } else if *byte == b'\\' {
+                                    quote_escape = true;
+                                } else if *byte == b'"' {
+                                    in_string = false;
+                                }
+                                continue;
+                            }
+                            match *byte {
+                                b'"' => in_string = true,
+                                b'(' | b'[' | b'{' => depth += 1,
+                                b')' | b']' | b'}' => {
+                                    if depth > 0 {
+                                        depth -= 1;
+                                    }
+                                }
+                                b',' => {
+                                    if depth == 0 {
+                                        comma = Some(offset);
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        if let Some(comma) = comma {
+                            let snippet = content[comma + 1..].trim();
+                            if !snippet.is_empty() {
+                                let wrapper = format!("fn __gset_macro() {{ {} }}", snippet);
+                                let mut parser = tree_sitter::Parser::new();
+                                if parser
+                                    .set_language(&tree_sitter_rust::LANGUAGE.into())
+                                    .is_ok()
+                                {
+                                    if let Some(tree) = parser.parse(&wrapper, None) {
+                                        let function = (0..tree.root_node().child_count())
+                                            .find_map(|index| {
+                                                tree.root_node()
+                                                    .child(index)
+                                                    .filter(|child| child.kind() == "function_item")
+                                            });
+                                        if let Some(function) = function {
+                                            if let Some(body) = function.child_by_field_name("body")
+                                            {
+                                                let block = lower_block(
+                                                    body,
+                                                    SourceId::from_raw(0),
+                                                    &wrapper,
+                                                );
+                                                if let Some(Stmt::Expr(expr)) =
+                                                    block.statements.last()
+                                                {
+                                                    args.push(expr.clone());
+                                                } else if let Some(Stmt::Return {
+                                                    value: Some(expr),
+                                                    ..
+                                                }) = block.statements.last()
+                                                {
+                                                    args.push(expr.clone());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if name == "println" || name == "print" {
+                if args.is_empty() {
+                    Expr::null(span)
+                } else {
+                    Expr::new(
+                        ExprKind::Call {
+                            callee: Box::new(Expr::new(
+                                ExprKind::Path(gset_ir::Path::single(Arc::from("print"))),
+                                span,
+                            )),
+                            args,
+                            named_args: Vec::new(),
+                        },
+                        span,
+                    )
+                }
+            } else {
+                Expr::error(format!("unsupported macro {}", name), span)
+            }
         }
         "comma_expression" => {
             // Evaluate all, keep the last.
