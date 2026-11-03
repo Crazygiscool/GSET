@@ -635,7 +635,8 @@ impl RustEmitter<'_> {
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 if *op == BinaryOp::Add
-                    && (matches!(lhs.ty, Type::Str | Type::StrLit) || matches!(rhs.ty, Type::Str | Type::StrLit))
+                    && (matches!(lhs.ty, Type::Str | Type::StrLit)
+                        || matches!(rhs.ty, Type::Str | Type::StrLit))
                 {
                     let lhs = self.expr(lhs);
                     let rhs = self.expr(rhs);
