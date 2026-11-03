@@ -1,3 +1,133 @@
+
+use std::collections::HashMap;
+
+#[derive(Clone, Debug)]
+enum Value {
+
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+    List(Vec<Value>),
+    Map(HashMap<String, Value>),
+    Null,
+}
+
+impl Value {
+    pub fn abs(&self) -> Value {
+        match self {
+            Value::Int(v) => Value::Int(v.abs()),
+            Value::Float(v) => Value::Float(v.abs()),
+            _ => Value::Null
+        }
+    }
+    pub fn len(&self) -> i64 {
+        match self {
+            Value::Str(v) => v.chars().count() as i64,
+            Value::List(v) => v.len() as i64,
+            Value::Map(v) => v.len() as i64,
+            _ => 0
+        }
+    }
+    pub fn to_uppercase(&self) -> Value {
+        match self { Value::Str(v) => Value::Str(v.to_uppercase()), _ => self.clone() }
+    }
+    pub fn to_lowercase(&self) -> Value {
+        match self { Value::Str(v) => Value::Str(v.to_lowercase()), _ => self.clone() }
+    }
+    pub fn trim(&self) -> Value {
+        match self { Value::Str(v) => Value::Str(v.trim().to_string()), _ => self.clone() }
+    }
+    pub fn get(&self, key: &str) -> Value {
+        match self { Value::Map(v) => v.get(key).cloned().unwrap_or(Value::Null), _ => Value::Null }
+    }
+    pub fn as_int(&self) -> i64 {
+        match self {
+            Value::Int(v) => *v,
+            Value::Bool(v) => if *v { 1 } else { 0 },
+            Value::Float(v) => *v as i64,
+            Value::Str(v) => v.parse::<i64>().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    pub fn gset_truthy(&self) -> bool {
+        match self {
+            Value::Bool(v) => *v,
+            Value::Int(v) => *v != 0,
+            Value::Float(v) => *v != 0.0,
+            Value::Str(v) => !v.is_empty(),
+            Value::List(v) => !v.is_empty(),
+            Value::Map(v) => !v.is_empty(),
+            Value::Null => false,
+        }
+    }
+    pub fn gset_iterate(&self) -> Vec<Value> {
+        match self {
+            Value::List(v) => v.clone(),
+            Value::Str(v) => v.chars().map(|c: char| Value::Str(c.to_string())).collect(),
+            Value::Map(v) => v.values().cloned().collect(),
+            _ => vec![self.clone()],
+        }
+    }
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Int(v) => write!(f, "{}", v),
+            Value::Float(v) => write!(f, "{}", v),
+            Value::Bool(v) => write!(f, "{}", v),
+            Value::Str(v) => write!(f, "{}", v),
+            Value::List(v) => write!(f, "{:?}", v),
+            Value::Map(v) => write!(f, "{:?}", v),
+            Value::Null => write!(f, "nil"),
+        }
+    }
+}
+
+impl std::ops::Add for Value {
+    type Output = Value;
+    fn add(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l + r),
+            (Value::Float(l), Value::Float(r)) => Value::Float(l + r),
+            (Value::Float(l), Value::Int(r)) => Value::Float(l + (r as f64)),
+            (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) + r),
+            (Value::Str(l), Value::Str(r)) => Value::Str(format!("{}{}", l , r)),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::cmp::PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Int(l), Value::Int(r)) => l == r,
+            (Value::Float(l), Value::Float(r)) => l == r,
+            (Value::Str(l), Value::Str(r)) => l == r,
+            (Value::Bool(l), Value::Bool(r)) => l == r,
+            _ => false,
+        }
+    }
+}
+
+impl std::cmp::PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Value::Int(l), Value::Int(r)) => l.partial_cmp(r),
+            (Value::Float(l), Value::Float(r)) => l.partial_cmp(r),
+            _ => None,
+        }
+    }
+}
+
+impl Default for Value {
+    fn default() -> Self { Value::Int(0) }
+}
+
+fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
+fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
+
 fn fib(n: i64) -> i64 {
     if n < 2 {
         return n;

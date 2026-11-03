@@ -61,6 +61,9 @@ impl Backend for Rust {
         diagnostics: &mut gset_ir::DiagnosticBag,
     ) {
         let _ = source_map;
+        if rust_uses_unknown(module) {
+            emit_runtime(writer);
+        }
         let class_names: HashSet<String> = module
             .items
             .iter()
@@ -89,6 +92,8 @@ impl Backend for Rust {
             classes: class_names.clone(),
             self_name: "self".to_string(),
             generator_mode: false,
+            current_return_type: String::new(),
+            clone_field_access: true,
             locals: HashSet::new(),
             diagnostics,
             writer,
@@ -110,6 +115,8 @@ struct RustEmitter<'a> {
     classes: HashSet<String>,
     self_name: String,
     generator_mode: bool,
+    current_return_type: String,
+    clone_field_access: bool,
     locals: HashSet<String>,
     diagnostics: &'a mut gset_ir::DiagnosticBag,
     writer: &'a mut CodeWriter,
@@ -148,15 +155,16 @@ impl RustEmitter<'_> {
                     Type::List { element, .. } => rust_type(element),
                     Type::Set(element) => rust_type(element),
                     Type::Option(boxed) => rust_type(boxed),
+                    Type::Unknown(_) => "Value".to_string(),
                     other => rust_type(other),
                 })
-                .unwrap_or_else(|| "i64".to_string());
+                .unwrap_or_else(|| "Value".to_string());
             format!("Vec<{}>", extracted)
         } else {
             match function.ret.as_ref() {
                 Some(gset_ir::Type::Unknown(_)) => {
                     if function_returns_value(function) {
-                        "i64".to_string()
+                        "Value".to_string()
                     } else {
                         "()".to_string()
                     }
@@ -164,7 +172,7 @@ impl RustEmitter<'_> {
                 Some(other) => rust_type(other),
                 None => {
                     if function_returns_value(function) {
-                        "i64".to_string()
+                        "Value".to_string()
                     } else {
                         "()".to_string()
                     }
@@ -181,10 +189,13 @@ impl RustEmitter<'_> {
         for param in &function.params {
             self.locals.insert(pattern_binding(param));
         }
+        let saved_return = self.current_return_type.clone();
+        self.current_return_type = ret.clone();
         let saved = self.generator_mode;
         self.generator_mode = generator;
         self.emit_block(&function.body);
         self.generator_mode = saved;
+        self.current_return_type = saved_return;
         if generator {
             self.writer.writeln("__out");
         } else if !body_ends_in_return(&function.body) {
@@ -270,7 +281,10 @@ impl RustEmitter<'_> {
                     return;
                 }
                 if let PatternKind::Location(expr) = &target.kind {
+                    let saved = self.clone_field_access;
+                    self.clone_field_access = false;
                     let target = self.expr(expr);
+                    self.clone_field_access = saved;
                     let assigned = self.expr(value);
                     self.writer.writeln(&format!("{} = {};", target, assigned));
                     return;
@@ -280,8 +294,26 @@ impl RustEmitter<'_> {
             Stmt::Return {
                 value: Some(value), ..
             } => {
-                let value = self.expr(value);
-                self.writer.writeln(&format!("return {};", value));
+                let expected = self.current_return_type.clone();
+                let ty = value.ty.clone();
+                let rendered = self.expr(value);
+                let rendered = if expected == "Value" {
+                    match ty {
+                        gset_ir::Type::Int(_) => format!("Value::Int({})", rendered),
+                        gset_ir::Type::Bool => format!("Value::Bool({})", rendered),
+                        gset_ir::Type::Str | gset_ir::Type::StrLit => format!("Value::Str({})", rendered),
+                        gset_ir::Type::Float => format!("Value::Float({})", rendered),
+                        gset_ir::Type::List { .. } | gset_ir::Type::Tuple(_) | gset_ir::Type::Set(_) => format!("Value::List({})", rendered),
+                        gset_ir::Type::Map(_) | gset_ir::Type::OrderedMap { .. } => {
+                            format!("Value::Map({})", rendered)
+                        }
+                        gset_ir::Type::Unknown(_) => format!("Value::Int({})", rendered),
+                        _ => rendered,
+                    }
+                } else {
+                    rendered
+                };
+                self.writer.writeln(&format!("return {};", rendered));
             }
             Stmt::Return { value: None, .. } => {
                 self.writer.writeln("return;");
@@ -403,7 +435,11 @@ impl RustEmitter<'_> {
                         ));
                     }
                     _ => {
-                        let iterable = self.expr(iterable);
+                        let iterable = if matches!(iterable.ty, Type::Unknown(_)) {
+                            format!("gset_iterate(&{})", self.expr(iterable))
+                        } else {
+                            self.expr(iterable)
+                        };
                         self.writer
                             .writeln(&format!("for {}{} in {} {{", mut_prefix, target, iterable));
                     }
@@ -488,18 +524,17 @@ impl RustEmitter<'_> {
         let rendered = self.expr(expr);
         match &expr.ty {
             gset_ir::Type::Bool => rendered,
-            gset_ir::Type::Int(_) | gset_ir::Type::Unknown(_) => {
-                format!("({} != 0)", rendered)
-            }
-            gset_ir::Type::Float => format!("({} != 0.0)", rendered),
+            gset_ir::Type::Int(_) => format!("gset_truthy(&Value::Int({}))", rendered),
+            gset_ir::Type::Unknown(_) => format!("gset_truthy(&Value::Int({}))", rendered),
+            gset_ir::Type::Float => format!("gset_truthy(&Value::Float({}))", rendered),
             gset_ir::Type::Str | gset_ir::Type::StrLit | gset_ir::Type::Char => {
-                format!("!{}.is_empty()", rendered)
+                format!("gset_truthy(&Value::Str({}))", rendered)
             }
             gset_ir::Type::List { .. } | gset_ir::Type::Tuple(_) | gset_ir::Type::Set(_) => {
-                format!("!{}.is_empty()", rendered)
+                format!("gset_truthy(&Value::List({}))", rendered)
             }
             gset_ir::Type::Map(_) | gset_ir::Type::OrderedMap { .. } => {
-                format!("!{}.is_empty()", rendered)
+                format!("gset_truthy(&Value::Map({}))", rendered)
             }
             gset_ir::Type::Option(_) => format!("{}.is_some()", rendered),
             gset_ir::Type::Null => "false".to_string(),
@@ -624,7 +659,7 @@ impl RustEmitter<'_> {
                             self.expr(&args[0])
                         };
                         return format!(
-                            r#"{}.get(&{}).cloned().unwrap_or_default()"#,
+                            r#"{}.get(&{}).cloned().unwrap_or(Value::Null).as_int()"#,
                             receiver, key
                         );
                     }
@@ -714,13 +749,28 @@ impl RustEmitter<'_> {
                 format!("{} {} {}", lhs, op, rhs)
             }
             ExprKind::Logical { op, lhs, rhs } => {
-                let op = match op {
-                    LogicalOp::And => "&&",
-                    LogicalOp::Or => "||",
-                };
-                let lhs = self.expr(lhs);
-                let rhs = self.expr(rhs);
-                format!("{} {} {}", lhs, op, rhs)
+                let has_unknown =
+                    matches!(lhs.ty, Type::Unknown(_)) || matches!(rhs.ty, Type::Unknown(_));
+                if has_unknown {
+                    let lhs = self.expr(lhs);
+                    let rhs = self.expr(rhs);
+                    match op {
+                        LogicalOp::And => {
+                            format!("(gset_truthy(&{}) && gset_truthy(&{}))", lhs, rhs)
+                        }
+                        LogicalOp::Or => {
+                            format!("(gset_truthy(&{}) || gset_truthy(&{}))", lhs, rhs)
+                        }
+                    }
+                } else {
+                    let op = match op {
+                        LogicalOp::And => "&&",
+                        LogicalOp::Or => "||",
+                    };
+                    let lhs = self.expr(lhs);
+                    let rhs = self.expr(rhs);
+                    format!("({} {} {})", lhs, op, rhs)
+                }
             }
             ExprKind::Call { callee, args, .. } => {
                 if let ExprKind::Path(path) = &callee.kind {
@@ -732,7 +782,19 @@ impl RustEmitter<'_> {
                         let class_name = path.segments[0].to_string();
                         let args = args
                             .iter()
-                            .map(|arg| self.expr(arg))
+                            .map(|arg| match arg.ty {
+                                Type::Int(_) => format!("Value::Int({})", self.expr(arg)),
+                                Type::Float => format!("Value::Float({})", self.expr(arg)),
+                                Type::Bool => format!("Value::Bool({})", self.expr(arg)),
+                                Type::Str | Type::StrLit => {
+                                    format!("Value::Str({})", self.expr(arg))
+                                }
+                                Type::List { .. } | Type::Set(_) | Type::Map(_) => {
+                                    format!("Value::List({})", self.expr(arg))
+                                }
+                                Type::Unknown(_) => self.expr(arg),
+                                _ => self.expr(arg),
+                            })
                             .collect::<Vec<_>>()
                             .join(", ");
                         return format!("{}::new({})", class_name, args);
@@ -793,7 +855,13 @@ impl RustEmitter<'_> {
                     .join(", ");
                 format!("{}.{}({})", self.expr(receiver), method, args)
             }
-            ExprKind::Field { target, field } => format!("{}.{}", self.expr(target), field),
+            ExprKind::Field { target, field } => {
+                if self.clone_field_access {
+                    format!("{}.{}.clone()", self.expr(target), field)
+                } else {
+                    format!("{}.{}", self.expr(target), field)
+                }
+            }
             ExprKind::Index { target, index } => {
                 let target_expr = self.expr(target);
                 let is_map = matches!(target.ty, Type::Map(_) | Type::OrderedMap { .. });
@@ -1080,8 +1148,161 @@ fn rust_type(ty: &Type) -> String {
                 .join(", ")
                 + ","
         ),
+        Type::Unknown(_) => "Value".to_string(),
         _ => "i64".to_string(),
     }
+}
+
+
+fn rust_uses_unknown(module: &Module) -> bool {
+    use gset_ir::Module;
+    fn type_uses_unknown(ty: &gset_ir::Type) -> bool {
+        match ty {
+            gset_ir::Type::Unknown(_) => true,
+            gset_ir::Type::List { element, .. } => type_uses_unknown(element),
+            gset_ir::Type::Tuple(items) => items.iter().any(type_uses_unknown),
+            gset_ir::Type::Set(item) => type_uses_unknown(item),
+            gset_ir::Type::Map(value) => type_uses_unknown(value),
+            gset_ir::Type::OrderedMap { key, value, .. } => {
+                type_uses_unknown(key) || type_uses_unknown(value)
+            }
+            gset_ir::Type::Option(item) => type_uses_unknown(item),
+            gset_ir::Type::Function { params, ret, .. } => {
+                params.iter().any(type_uses_unknown) || type_uses_unknown(ret)
+            }
+            gset_ir::Type::Named(_) | gset_ir::Type::Generic { .. } => false,
+            _ => false,
+        }
+    }
+    fn expr_uses_unknown(expr: &gset_ir::Expr) -> bool {
+        type_uses_unknown(&expr.ty)
+            || match &expr.kind {
+                gset_ir::ExprKind::Binary { lhs, rhs, .. } => {
+                    expr_uses_unknown(lhs) || expr_uses_unknown(rhs)
+                }
+                gset_ir::ExprKind::Compare { lhs, rhs, .. } => {
+                    expr_uses_unknown(lhs) || expr_uses_unknown(rhs)
+                }
+                gset_ir::ExprKind::Logical { lhs, rhs, .. } => {
+                    expr_uses_unknown(lhs) || expr_uses_unknown(rhs)
+                }
+                gset_ir::ExprKind::Unary { operand, .. } => expr_uses_unknown(operand),
+                gset_ir::ExprKind::Call { callee, args, .. } => {
+                    expr_uses_unknown(callee) || args.iter().any(expr_uses_unknown)
+                }
+                gset_ir::ExprKind::MethodCall { receiver, args, named_args, .. } => {
+                    expr_uses_unknown(receiver)
+                        || args.iter().any(expr_uses_unknown)
+                        || named_args.iter().any(|arg| expr_uses_unknown(&arg.value))
+                }
+                gset_ir::ExprKind::Index { target, index } => {
+                    expr_uses_unknown(target) || expr_uses_unknown(index)
+                }
+                gset_ir::ExprKind::Field { target, .. } => expr_uses_unknown(target),
+                gset_ir::ExprKind::List { elements }
+                | gset_ir::ExprKind::Tuple { elements }
+                | gset_ir::ExprKind::Set { elements } => elements.iter().any(expr_uses_unknown),
+                gset_ir::ExprKind::Map { entries } => entries
+                    .iter()
+                    .any(|entry| expr_uses_unknown(&entry.value)),
+                gset_ir::ExprKind::Slice { target, start, end, step, .. } => {
+                    expr_uses_unknown(target)
+                        || start.as_ref().is_some_and(|value| expr_uses_unknown(value))
+                        || end.as_ref().is_some_and(|value| expr_uses_unknown(value))
+                        || step.as_ref().is_some_and(|value| expr_uses_unknown(value))
+                }
+                gset_ir::ExprKind::Lambda { body, .. } => expr_uses_unknown(body),
+                gset_ir::ExprKind::Conditional { condition, then_branch, else_branch } => {
+                    expr_uses_unknown(condition)
+                        || expr_uses_unknown(then_branch)
+                        || expr_uses_unknown(else_branch)
+                }
+                _ => false,
+            }
+    }
+    fn stmt_uses_unknown(statement: &gset_ir::Stmt) -> bool {
+        match statement {
+            Stmt::Decl(decl) => {
+                if let Some(value) = &decl.value {
+                    expr_uses_unknown(value)
+                } else {
+                    false
+                }
+            }
+            Stmt::Expr(expr) => expr_uses_unknown(expr),
+            Stmt::Assign { value, .. } => expr_uses_unknown(value),
+            Stmt::Return { value: Some(expr), .. } => expr_uses_unknown(expr),
+            Stmt::If { condition, then_branch, else_branch, .. } => {
+                expr_uses_unknown(condition)
+                    || then_branch.statements.iter().any(stmt_uses_unknown)
+                    || else_branch
+                        .as_ref()
+                        .map(|branch| match branch.as_ref() {
+                            gset_ir::Else::Block(block) => block.statements.iter().any(stmt_uses_unknown),
+                            gset_ir::Else::If(statement) => stmt_uses_unknown(statement),
+                        })
+                        .unwrap_or(false)
+            }
+            Stmt::While { condition, body, .. } => {
+                expr_uses_unknown(condition)
+                    || body.statements.iter().any(stmt_uses_unknown)
+            }
+            Stmt::For { init, condition, update, body, .. } => {
+                init.as_ref().is_some_and(|statement| stmt_uses_unknown(statement))
+                    || condition.as_ref().is_some_and(expr_uses_unknown)
+                    || update.as_ref().is_some_and(expr_uses_unknown)
+                    || body.statements.iter().any(stmt_uses_unknown)
+            }
+            Stmt::ForIn { iterable, body, .. } => {
+                expr_uses_unknown(iterable) || body.statements.iter().any(stmt_uses_unknown)
+            }
+            Stmt::Block(block) => block.statements.iter().any(stmt_uses_unknown),
+            Stmt::Try { body, handlers, finally, .. } => {
+                body.statements.iter().any(stmt_uses_unknown)
+                    || handlers.iter().any(|handler| handler.body.statements.iter().any(stmt_uses_unknown))
+                    || finally.as_ref().is_some_and(|block| block.statements.iter().any(stmt_uses_unknown))
+            }
+            _ => false,
+        }
+    }
+    module
+        .items
+        .iter()
+        .any(|item| match item {
+            Item::Function(function) => {
+                function
+                    .params
+                    .iter()
+                    .any(|pattern| pattern.names.iter().any(|_| false))
+                    || function.ret.as_ref().is_some_and(type_uses_unknown)
+                    || function.body.statements.iter().any(stmt_uses_unknown)
+            }
+            Item::Global(variable) => {
+                if let Some(value) = &variable.value {
+                    type_uses_unknown(&variable.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN))
+                        || expr_uses_unknown(value)
+                } else {
+                    type_uses_unknown(&variable.ty.clone().unwrap_or(gset_ir::Type::UNKNOWN))
+                }
+            }
+            Item::Class(class) => {
+                class.fields.iter().any(|field| {
+                    field
+                        .ty
+                        .as_ref()
+                        .is_some_and(type_uses_unknown)
+                        || field.value.as_ref().is_some_and(expr_uses_unknown)
+                }) || class.methods.iter().any(|method| {
+                    method.ret.as_ref().is_some_and(type_uses_unknown)
+                        || method.body.statements.iter().any(stmt_uses_unknown)
+                }) || class.constructors.iter().any(|ctor| {
+                    ctor.ret.as_ref().is_some_and(type_uses_unknown)
+                        || ctor.body.statements.iter().any(stmt_uses_unknown)
+                })
+            }
+            Item::Stmt(statement) => stmt_uses_unknown(statement),
+            _ => false,
+        })
 }
 
 fn emit_import(diagnostics: &mut gset_ir::DiagnosticBag, import: &gset_ir::Import) {
@@ -1180,7 +1401,7 @@ fn emit_class(
             let ty = ty
                 .as_ref()
                 .map(rust_type)
-                .unwrap_or_else(|| "i64".to_string());
+                .unwrap_or_else(|| "Value".to_string());
             writer.writeln(&format!("{}: {},", name, ty));
         }
     }
@@ -1212,7 +1433,7 @@ fn emit_class(
                     .single_binding()
                     .map(|name| name.to_string())
                     .unwrap_or_else(|| "_".to_string());
-                format!("{}: i64", binding)
+                format!("{}: Value", binding)
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -1235,6 +1456,8 @@ fn emit_class(
                         classes: HashSet::new(),
                         self_name: "__self".to_string(),
                         generator_mode: false,
+                        current_return_type: "Value".to_string(),
+                        clone_field_access: true,
                         locals: HashSet::new(),
                         diagnostics,
                         writer,
@@ -1268,14 +1491,14 @@ fn emit_class(
                     .get(_index + 1)
                     .and_then(|ty| ty.as_ref())
                     .map(rust_type)
-                    .unwrap_or_else(|| "i64".to_string());
+                    .unwrap_or_else(|| "Value".to_string());
                 format!("{}: {}", binding, ty)
             })
             .collect::<Vec<_>>()
             .join(", ");
         let ret = method.ret.as_ref().map(rust_type).unwrap_or_else(|| {
             if function_returns_value(method) {
-                "i64".to_string()
+                "Value".to_string()
             } else {
                 "()".to_string()
             }
@@ -1295,6 +1518,8 @@ fn emit_class(
             classes: HashSet::new(),
             self_name: "self".to_string(),
             generator_mode: false,
+            current_return_type: "Value".to_string(),
+            clone_field_access: true,
             locals: HashSet::new(),
             diagnostics,
             writer,
@@ -1316,4 +1541,140 @@ fn emit_class(
             class.name
         ),
     ).with_code("gset-backend-import"));
+}
+
+static RUST_TARGET_RUNTIME: &str = r#"
+use std::collections::HashMap;
+
+#[derive(Clone, Debug)]
+enum Value {
+
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+    List(Vec<Value>),
+    Map(HashMap<String, Value>),
+    Null,
+}
+
+impl Value {
+    pub fn abs(&self) -> Value {
+        match self {
+            Value::Int(v) => Value::Int(v.abs()),
+            Value::Float(v) => Value::Float(v.abs()),
+            _ => Value::Null
+        }
+    }
+    pub fn len(&self) -> i64 {
+        match self {
+            Value::Str(v) => v.chars().count() as i64,
+            Value::List(v) => v.len() as i64,
+            Value::Map(v) => v.len() as i64,
+            _ => 0
+        }
+    }
+    pub fn to_uppercase(&self) -> Value {
+        match self { Value::Str(v) => Value::Str(v.to_uppercase()), _ => self.clone() }
+    }
+    pub fn to_lowercase(&self) -> Value {
+        match self { Value::Str(v) => Value::Str(v.to_lowercase()), _ => self.clone() }
+    }
+    pub fn trim(&self) -> Value {
+        match self { Value::Str(v) => Value::Str(v.trim().to_string()), _ => self.clone() }
+    }
+    pub fn get(&self, key: &str) -> Value {
+        match self { Value::Map(v) => v.get(key).cloned().unwrap_or(Value::Null), _ => Value::Null }
+    }
+    pub fn as_int(&self) -> i64 {
+        match self {
+            Value::Int(v) => *v,
+            Value::Bool(v) => if *v { 1 } else { 0 },
+            Value::Float(v) => *v as i64,
+            Value::Str(v) => v.parse::<i64>().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    pub fn gset_truthy(&self) -> bool {
+        match self {
+            Value::Bool(v) => *v,
+            Value::Int(v) => *v != 0,
+            Value::Float(v) => *v != 0.0,
+            Value::Str(v) => !v.is_empty(),
+            Value::List(v) => !v.is_empty(),
+            Value::Map(v) => !v.is_empty(),
+            Value::Null => false,
+        }
+    }
+    pub fn gset_iterate(&self) -> Vec<Value> {
+        match self {
+            Value::List(v) => v.clone(),
+            Value::Str(v) => v.chars().map(|c: char| Value::Str(c.to_string())).collect(),
+            Value::Map(v) => v.values().cloned().collect(),
+            _ => vec![self.clone()],
+        }
+    }
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Int(v) => write!(f, "{}", v),
+            Value::Float(v) => write!(f, "{}", v),
+            Value::Bool(v) => write!(f, "{}", v),
+            Value::Str(v) => write!(f, "{}", v),
+            Value::List(v) => write!(f, "{:?}", v),
+            Value::Map(v) => write!(f, "{:?}", v),
+            Value::Null => write!(f, "nil"),
+        }
+    }
+}
+
+impl std::ops::Add for Value {
+    type Output = Value;
+    fn add(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l + r),
+            (Value::Float(l), Value::Float(r)) => Value::Float(l + r),
+            (Value::Float(l), Value::Int(r)) => Value::Float(l + (r as f64)),
+            (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) + r),
+            (Value::Str(l), Value::Str(r)) => Value::Str(format!("{}{}", l , r)),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::cmp::PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Int(l), Value::Int(r)) => l == r,
+            (Value::Float(l), Value::Float(r)) => l == r,
+            (Value::Str(l), Value::Str(r)) => l == r,
+            (Value::Bool(l), Value::Bool(r)) => l == r,
+            _ => false,
+        }
+    }
+}
+
+impl std::cmp::PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Value::Int(l), Value::Int(r)) => l.partial_cmp(r),
+            (Value::Float(l), Value::Float(r)) => l.partial_cmp(r),
+            _ => None,
+        }
+    }
+}
+
+impl Default for Value {
+    fn default() -> Self { Value::Int(0) }
+}
+
+fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
+fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
+"#;
+
+fn emit_runtime(writer: &mut CodeWriter) {
+    writer.write(RUST_TARGET_RUNTIME);
+    writer.newline();
 }
