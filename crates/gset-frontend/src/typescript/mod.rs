@@ -1317,15 +1317,14 @@ fn lower_import(node: tree_sitter::Node, source: SourceId, text: &str) -> Option
         let mut names = Vec::new();
         let mut ci = 0;
         while ci < named.child_count() {
-            if let Some(spec) = named.child(ci) {
-                if let Some(name_node) = spec.child_by_field_name("name") {
+            if let Some(spec) = named.child(ci)
+                && let Some(name_node) = spec.child_by_field_name("name") {
                     let original = Name::from(text_of(name_node, text));
                     let alias = spec
                         .child_by_field_name("alias")
                         .map(|n| Name::from(text_of(n, text)));
                     names.push(gset_ir::ImportedName { original, alias });
                 }
-            }
             ci += 1;
         }
         if !names.is_empty() {
@@ -1347,10 +1346,10 @@ fn lower_import(node: tree_sitter::Node, source: SourceId, text: &str) -> Option
             let clause = find_child(node, "import_clause")?;
             let mut ci = 0;
             while ci < clause.child_count() {
-                if let Some(child) = clause.child(ci) {
-                    if child.kind() == "identifier" {
-                        return Some(Name::from(text_of(child, text)));
-                    }
+                if let Some(child) = clause.child(ci)
+                    && child.kind() == "identifier"
+                {
+                    return Some(Name::from(text_of(child, text)));
                 }
                 ci += 1;
             }
