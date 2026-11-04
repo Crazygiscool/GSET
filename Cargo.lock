@@ -301,6 +301,7 @@ dependencies = [
  "gset-semantic",
  "rayon",
  "serde",
+ "serde_json",
  "thiserror",
  "toml",
 ]

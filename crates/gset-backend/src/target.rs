@@ -195,6 +195,13 @@ pub enum Support {
 }
 
 impl Support {
+    pub fn code(self) -> &'static str {
+        match self {
+            Support::Native => "native",
+            Support::Desugared => "desugared",
+            Support::Unsupported => "unsupported",
+        }
+    }
     /// Whether a construct may be emitted at all.
     pub fn is_supported(self) -> bool {
         !matches!(self, Support::Unsupported)

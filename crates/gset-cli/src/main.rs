@@ -25,6 +25,7 @@ use clap::{Parser, Subcommand};
 use gset_backend::TargetId;
 use gset_cli::{Output, PipelineError, transpile_with_options};
 
+mod mcp;
 mod validate;
 
 #[derive(Parser, Debug)]
@@ -87,6 +88,14 @@ enum Command {
         #[arg(long, name = "experimental-api-map")]
         experimental_api_map: bool,
     },
+    /// Show backend capability matrix
+    Capabilities {
+        /// Target language, optional
+        target: Option<String>,
+        /// Print JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Validate source or generated target code
     Validate {
         /// Source or project file to validate
@@ -98,6 +107,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Run GSET as an MCP server over stdio
+    Mcp,
     /// Print the version
     Version,
 }
@@ -134,7 +145,9 @@ fn main() -> ExitCode {
             keep,
             experimental_api_map,
         } => run_command(&path, &to, from.as_deref(), keep, experimental_api_map),
+        Command::Capabilities { target, json } => capabilities_command(target.as_deref(), json),
         Command::Validate { path, to, json } => validate::validate_command(&path, &to, json),
+        Command::Mcp => mcp::serve(),
         Command::Version => {
             println!("GSET v{}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -1062,5 +1075,64 @@ fn report(output: &Output, verbose: bool) {
     }
     if verbose && output.diagnostics.is_empty() {
         eprintln!("gset: no diagnostics");
+    }
+}
+
+fn capabilities_command(target: Option<&str>, json: bool) -> ExitCode {
+    let target = target.unwrap_or("rust");
+    let Some(backend) = gset_backend::backend_by_name(target) else {
+        eprintln!("gset: no backend for `{target}`");
+        return ExitCode::from(2);
+    };
+    let mut capabilities = Vec::new();
+    for capability in CapabilityList::all() {
+        capabilities.push((capability.name(), backend.capability(capability).code()));
+    }
+    if json {
+        let mut out = String::from("[");
+        for (index, (capability, support)) in capabilities.iter().enumerate() {
+            if index != 0 {
+                out.push(',');
+            }
+            out.push_str(&format!(
+                "{{\"capability\":\"{}\",\"support\":\"{}\"}}",
+                capability, support
+            ));
+        }
+        out.push(']');
+        println!("{}", out);
+    } else {
+        for (capability, support) in capabilities {
+            println!("{capability:28} {support}");
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+struct CapabilityList;
+impl CapabilityList {
+    fn all() -> Vec<gset_backend::Capability> {
+        vec![
+            gset_backend::Capability::Imports,
+            gset_backend::Capability::Classes,
+            gset_backend::Capability::Records,
+            gset_backend::Capability::Enums,
+            gset_backend::Capability::Interfaces,
+            gset_backend::Capability::TypeAliases,
+            gset_backend::Capability::Comprehensions,
+            gset_backend::Capability::Generators,
+            gset_backend::Capability::Exceptions,
+            gset_backend::Capability::ContextManagers,
+            gset_backend::Capability::Decorators,
+            gset_backend::Capability::Async,
+            gset_backend::Capability::FStrings,
+            gset_backend::Capability::Closures,
+            gset_backend::Capability::PatternMatching,
+            gset_backend::Capability::Slices,
+            gset_backend::Capability::KeywordArguments,
+            gset_backend::Capability::MultipleAssignment,
+            gset_backend::Capability::OperatorCall,
+            gset_backend::Capability::LoopElse,
+        ]
     }
 }
