@@ -8,7 +8,7 @@
 set -e
 
 REPO="Crazygiscool/GSETLang"
-VERSION="3.5.0"
+VERSION="3.6.0"
 # Resolve the latest release dynamically so the one-liner never installs stale bits.
 RESOLVED=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
   | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -n1)

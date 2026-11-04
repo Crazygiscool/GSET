@@ -882,6 +882,84 @@ fn run_command(
     keep: bool,
     experimental_api_map: bool,
 ) -> ExitCode {
+    if path.is_dir() {
+        if target != "rust" {
+            eprintln!(
+                "gset: running {} directories is supported only for the rust target",
+                target
+            );
+            return ExitCode::from(2);
+        }
+        let directory = temp_directory(path);
+        if let Err(error) = std::fs::create_dir_all(&directory) {
+            eprintln!("gset: cannot create {}: {error}", directory.display());
+            return ExitCode::from(1);
+        }
+        let status = transpile_directory(
+            path,
+            target,
+            from,
+            &[],
+            Some(&directory),
+            false,
+            experimental_api_map,
+            false,
+            false,
+        );
+        if status != ExitCode::SUCCESS {
+            if !keep {
+                let _ = std::fs::remove_dir_all(&directory);
+            }
+            return status;
+        }
+
+        let compile = ProcessCommand::new("cargo")
+            .current_dir(&directory)
+            .arg("build")
+            .arg("--quiet")
+            .status();
+        if let Err(error) = compile {
+            eprintln!("gset: cannot build generated project: {error}");
+            if !keep {
+                let _ = std::fs::remove_dir_all(&directory);
+            }
+            return ExitCode::from(127);
+        }
+        if compile.unwrap().code().unwrap_or(1) != 0 {
+            if !keep {
+                let _ = std::fs::remove_dir_all(&directory);
+            }
+            return ExitCode::from(1);
+        }
+
+        let execution = ProcessCommand::new("cargo")
+            .current_dir(&directory)
+            .arg("run")
+            .arg("--quiet")
+            .status();
+        let code = match execution {
+            Ok(status) => ExitCode::from(
+                status
+                    .code()
+                    .filter(|code| (0..=255).contains(code))
+                    .unwrap_or(1) as u8,
+            ),
+            Err(error) => {
+                eprintln!("gset: cannot run generated project: {error}");
+                if !keep {
+                    let _ = std::fs::remove_dir_all(&directory);
+                }
+                return ExitCode::from(127);
+            }
+        };
+        if keep {
+            eprintln!("gset: kept {}", directory.display());
+        } else {
+            let _ = std::fs::remove_dir_all(&directory);
+        }
+        return code;
+    }
+
     let output = match load(path, target, from, experimental_api_map) {
         Ok(output) => output,
         Err(code) => return code,

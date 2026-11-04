@@ -2,7 +2,7 @@
 
 .PHONY: all build test clippy fmt lint release clean install
 
-VERSION := 3.5.0
+VERSION := 3.6.0
 REPO := github.com/Crazygiscool/GSETLang
 
 all: build
