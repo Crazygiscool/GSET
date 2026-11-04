@@ -24,6 +24,7 @@ impl RustPythonApiRegistry {
     ];
 
     pub const METHODS: &'static [&'static str] = &[
+        "append",
         "endswith",
         "get",
         "len",
