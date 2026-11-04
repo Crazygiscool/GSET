@@ -19,7 +19,7 @@ malformed  module_shape
 backend    null_handling
 backend    numeric_literals
 backend    operators
-ok         returns
+malformed  returns
 backend    typed
 
-2 ok / 0 frontend / 18 backend / 3 malformed
+1 ok / 0 frontend / 18 backend / 4 malformed

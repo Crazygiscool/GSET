@@ -88,8 +88,15 @@ impl Backend for Rust {
             }
         }
 
+        let mut function_names = HashSet::new();
+        for item in &module.items {
+            if let Item::Function(function) = item {
+                function_names.insert(function.name.to_string());
+            }
+        }
         let mut emitter = RustEmitter {
             classes: class_names.clone(),
+            functions: function_names,
             self_name: "self".to_string(),
             generator_mode: false,
             current_return_type: String::new(),
@@ -113,6 +120,7 @@ impl Backend for Rust {
 
 struct RustEmitter<'a> {
     classes: HashSet<String>,
+    functions: HashSet<String>,
     self_name: String,
     generator_mode: bool,
     current_return_type: String,
@@ -227,6 +235,18 @@ impl RustEmitter<'_> {
                         } else {
                             target_ty
                         };
+                        let target_ty = if target_ty == "Value"
+                            && let ExprKind::Call { callee, .. } = &value.kind
+                            && let ExprKind::Path(path) = &callee.kind
+                            && path.is_bare()
+                            && self
+                                .classes
+                                .contains(path.segments.first().map(|s| s.as_ref()).unwrap_or(""))
+                        {
+                            path.segments.first().unwrap().to_string()
+                        } else {
+                            target_ty
+                        };
                         let value = wrap_rust_expr(&target_ty, &value.ty, self.expr(value));
                         self.locals.insert(binding.to_string(), target_ty.clone());
                         self.writer
@@ -335,7 +355,7 @@ impl RustEmitter<'_> {
                         gset_ir::Type::Map(_) | gset_ir::Type::OrderedMap { .. } => {
                             format!("Value::Map({})", rendered)
                         }
-                        gset_ir::Type::Unknown(_) => format!("Value::Int({})", rendered),
+                        gset_ir::Type::Unknown(_) => rendered,
                         _ => rendered,
                     }
                 } else {
@@ -552,7 +572,7 @@ impl RustEmitter<'_> {
         let rendered = self.expr(expr);
         match &expr.ty {
             gset_ir::Type::Bool => rendered,
-            gset_ir::Type::Int(_) => format!("gset_truthy(&Value::Int({}))", rendered),
+            gset_ir::Type::Int(_) => format!("({} != 0)", rendered),
             gset_ir::Type::Unknown(_) => format!("gset_truthy(&Value::Int({}))", rendered),
             gset_ir::Type::Float => format!("gset_truthy(&Value::Float({}))", rendered),
             gset_ir::Type::Str | gset_ir::Type::StrLit | gset_ir::Type::Char => {
@@ -733,6 +753,24 @@ impl RustEmitter<'_> {
                 Literal::Bytes(value) => format!("\"{}\".as_bytes()", value),
                 Literal::Null => "()".to_string(),
             },
+            ExprKind::Path(path) if path.is_bare() => {
+                let name = path
+                    .segments
+                    .first()
+                    .map(|segment| segment.to_string())
+                    .unwrap_or_default();
+                if let Some(ty) = self.locals.get(&name)
+                    && ty == "Value"
+                {
+                    format!("{}.clone()", name)
+                } else {
+                    path.segments
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                        .join("::")
+                }
+            }
             ExprKind::Path(path) => path
                 .segments
                 .iter()
@@ -799,13 +837,7 @@ impl RustEmitter<'_> {
                     } else {
                         self.expr(lhs)
                     };
-                    let rhs = if matches!(right_type, Type::Unknown(_) | Type::Int(_) | Type::Bool)
-                        && matches!(left_type, Type::Unknown(_))
-                    {
-                        format!("Value::Int({})", self.expr(rhs))
-                    } else {
-                        self.expr(rhs)
-                    };
+                    let rhs = self.expr(rhs);
                     format!("{} {} {}", lhs, op, rhs)
                 }
             }
@@ -1596,6 +1628,7 @@ fn emit_class(
                     // Reuse the ordinary statement emitter shape as simple text.
                     let mut emitter = RustEmitter {
                         classes: HashSet::new(),
+                        functions: HashSet::new(),
                         self_name: "__self".to_string(),
                         generator_mode: false,
                         current_return_type: "Value".to_string(),
@@ -1658,6 +1691,7 @@ fn emit_class(
         writer.indent();
         let mut emitter = RustEmitter {
             classes: HashSet::new(),
+            functions: HashSet::new(),
             self_name: "self".to_string(),
             generator_mode: false,
             current_return_type: "Value".to_string(),
@@ -1781,6 +1815,55 @@ impl std::ops::Add for Value {
             (Value::Float(l), Value::Int(r)) => Value::Float(l + (r as f64)),
             (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) + r),
             (Value::Str(l), Value::Str(r)) => Value::Str(format!("{}{}", l , r)),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Sub for Value {
+    type Output = Value;
+    fn sub(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l - r),
+            (Value::Float(l), Value::Float(r)) => Value::Float(l - r),
+            (Value::Float(l), Value::Int(r)) => Value::Float(l - (r as f64)),
+            (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) - r),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Mul for Value {
+    type Output = Value;
+    fn mul(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l * r),
+            (Value::Float(l), Value::Float(r)) => Value::Float(l * r),
+            (Value::Float(l), Value::Int(r)) => Value::Float(l * (r as f64)),
+            (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) * r),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Div for Value {
+    type Output = Value;
+    fn div(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l / r),
+            (Value::Float(l), Value::Float(r)) => Value::Float(l / r),
+            (Value::Float(l), Value::Int(r)) => Value::Float(l / (r as f64)),
+            (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) / r),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Rem for Value {
+    type Output = Value;
+    fn rem(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l % r),
             _ => Value::Null,
         }
     }

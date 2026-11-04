@@ -39,6 +39,16 @@ fn python_classes_to_java() {
 }
 
 #[test]
+fn python_to_rust() {
+    run_python_vs_rust();
+}
+
+#[test]
+fn python_classes_to_rust() {
+    run_cls_python_vs_rust();
+}
+
+#[test]
 fn python_to_go() {
     run_python_vs_go();
 }
@@ -290,4 +300,63 @@ fn run_cls_python_vs_java() {
     }
     assert_eq!(want.stdout, got.stdout);
     assert_eq!(want.status.code(), got.status.code());
+}
+
+fn python_out_value() -> String {
+    "55\n".to_string()
+}
+
+fn rust_run(code: &str) -> (String, Option<i32>) {
+    let dir = std::env::temp_dir().join("gset-diff-pyrust");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.rs");
+    std::fs::write(&main, code).unwrap();
+    let compile = std::process::Command::new("rustc")
+        .arg("--edition")
+        .arg("2024")
+        .arg(&main)
+        .arg("-o")
+        .arg(dir.join("main"))
+        .output()
+        .expect("rustc");
+    if !compile.status.success() {
+        eprintln!("{}", String::from_utf8_lossy(&compile.stderr));
+        let _ = std::fs::remove_dir_all(&dir);
+        panic!("rust compile failed");
+    }
+    let got = std::process::Command::new(dir.join("main"))
+        .output()
+        .expect("run rust");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&got.stdout).to_string();
+    (stdout, got.status.code())
+}
+
+fn run_python_vs_rust() {
+    let out = gset_cli::transpile("fib.py", SRC, Some("python"), "rust").unwrap();
+    assert!(!out.failed, "{:?}", out.diagnostics);
+    let want = python_out();
+    let (got, code) = rust_run(&out.text);
+    let want_code = python_out().status.code();
+    let want_stdout = String::from_utf8_lossy(&want.stdout).to_string();
+    if code.is_some() && code != want_code {
+        eprintln!("unexpected code {:?} vs {:?}", code, want_code);
+    }
+    assert_eq!(want_stdout, got);
+    assert_eq!(want_code, code);
+}
+
+fn run_cls_python_vs_rust() {
+    let out = gset_cli::transpile("cls.py", CLS, Some("python"), "rust").unwrap();
+    assert!(!out.failed, "{:?}", out.diagnostics);
+    let want = cls_python_out();
+    let (got, code) = rust_run(&out.text);
+    let want_code = want.status.code();
+    let want_stdout = String::from_utf8_lossy(&want.stdout).to_string();
+    if !got.contains("42") {
+        eprintln!("{}", got);
+    }
+    assert_eq!(want_stdout, got);
+    assert_eq!(want_code, code);
 }

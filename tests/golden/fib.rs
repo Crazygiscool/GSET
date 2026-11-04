@@ -99,6 +99,55 @@ impl std::ops::Add for Value {
     }
 }
 
+impl std::ops::Sub for Value {
+    type Output = Value;
+    fn sub(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l - r),
+            (Value::Float(l), Value::Float(r)) => Value::Float(l - r),
+            (Value::Float(l), Value::Int(r)) => Value::Float(l - (r as f64)),
+            (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) - r),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Mul for Value {
+    type Output = Value;
+    fn mul(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l * r),
+            (Value::Float(l), Value::Float(r)) => Value::Float(l * r),
+            (Value::Float(l), Value::Int(r)) => Value::Float(l * (r as f64)),
+            (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) * r),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Div for Value {
+    type Output = Value;
+    fn div(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l / r),
+            (Value::Float(l), Value::Float(r)) => Value::Float(l / r),
+            (Value::Float(l), Value::Int(r)) => Value::Float(l / (r as f64)),
+            (Value::Int(l), Value::Float(r)) => Value::Float((l as f64) / r),
+            _ => Value::Null,
+        }
+    }
+}
+
+impl std::ops::Rem for Value {
+    type Output = Value;
+    fn rem(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Value::Int(l), Value::Int(r)) => Value::Int(l % r),
+            _ => Value::Null,
+        }
+    }
+}
+
 impl std::cmp::PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -121,12 +170,63 @@ impl std::cmp::PartialOrd for Value {
     }
 }
 
+impl std::cmp::PartialEq<i64> for Value {
+    fn eq(&self, other: &i64) -> bool {
+        match self {
+            Value::Int(v) => *v == *other,
+            Value::Float(v) => *v == *other as f64,
+            _ => false,
+        }
+    }
+}
+
+impl std::cmp::PartialOrd<i64> for Value {
+    fn partial_cmp(&self, other: &i64) -> Option<std::cmp::Ordering> {
+        match self {
+            Value::Int(v) => v.partial_cmp(other),
+            Value::Float(v) => (*v as i64).partial_cmp(other),
+            _ => None,
+        }
+    }
+}
+
+impl std::cmp::PartialEq<Value> for i64 {
+    fn eq(&self, other: &Value) -> bool {
+        match other {
+            Value::Int(v) => *self == *v,
+            Value::Float(v) => *self as f64 == *v,
+            _ => false,
+        }
+    }
+}
+
+impl std::cmp::PartialOrd<Value> for i64 {
+    fn partial_cmp(&self, other: &Value) -> Option<std::cmp::Ordering> {
+        match other {
+            Value::Int(v) => self.partial_cmp(v),
+            Value::Float(v) => self.partial_cmp(&(*v as i64)),
+            _ => None,
+        }
+    }
+}
+
 impl Default for Value {
     fn default() -> Self { Value::Int(0) }
 }
 
 fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
 fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
+
+impl std::ops::Add<Value> for i64 {
+    type Output = Value;
+    fn add(self, rhs: Value) -> Self::Output {
+        match rhs {
+            Value::Int(r) => Value::Int(self + r),
+            Value::Float(r) => Value::Float((self as f64) + r),
+            _ => Value::Null,
+        }
+    }
+}
 
 impl std::ops::Sub<i64> for Value {
     type Output = Value;

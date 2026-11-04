@@ -1345,13 +1345,14 @@ fn lower_import(node: tree_sitter::Node, source: SourceId, text: &str) -> Option
         let mut ci = 0;
         while ci < named.child_count() {
             if let Some(spec) = named.child(ci)
-                && let Some(name_node) = spec.child_by_field_name("name") {
-                    let original = Name::from(text_of(name_node, text));
-                    let alias = spec
-                        .child_by_field_name("alias")
-                        .map(|n| Name::from(text_of(n, text)));
-                    names.push(gset_ir::ImportedName { original, alias });
-                }
+                && let Some(name_node) = spec.child_by_field_name("name")
+            {
+                let original = Name::from(text_of(name_node, text));
+                let alias = spec
+                    .child_by_field_name("alias")
+                    .map(|n| Name::from(text_of(n, text)));
+                names.push(gset_ir::ImportedName { original, alias });
+            }
             ci += 1;
         }
         if !names.is_empty() {
