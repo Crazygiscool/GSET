@@ -836,7 +836,7 @@ impl RustEmitter<'_> {
                         let receiver = self.expr(receiver);
                         return match ty {
                             Type::Str | Type::StrLit | Type::Char => {
-                                format!("{}.chars().count()", receiver)
+                                format!("{}.chars().count() as i64", receiver)
                             }
                             _ => format!("{}.len()", receiver),
                         };
