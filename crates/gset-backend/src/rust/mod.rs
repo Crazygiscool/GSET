@@ -782,6 +782,14 @@ impl RustEmitter<'_> {
             }
             if named_args.is_empty() {
                 match method.as_ref() {
+                    "append" if args.len() == 1 => {
+                        let receiver = self.expr(receiver);
+                        let arg = self.expr(&args[0]);
+                        return format!(
+                            "{{ let mut __append = {}.clone(); __append.push({}); __append.clone() }}",
+                            receiver, arg
+                        );
+                    }
                     "upper" | "to_uppercase" => {
                         let receiver = self.expr(receiver);
                         return format!("{}.to_uppercase()", receiver);
