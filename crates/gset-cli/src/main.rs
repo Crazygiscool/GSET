@@ -91,6 +91,7 @@ enum Command {
     /// Show backend capability matrix
     Capabilities {
         /// Target language, optional
+        #[arg(short = 't', long = "target")]
         target: Option<String>,
         /// Print JSON
         #[arg(long)]

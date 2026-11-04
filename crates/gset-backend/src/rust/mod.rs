@@ -42,12 +42,14 @@ impl Backend for Rust {
 
     fn capability(&self, capability: Capability) -> Support {
         match capability {
-            Capability::Exceptions => Support::Native,
-            Capability::Slices
-            | Capability::Closures
+            Capability::Exceptions
+            | Capability::Slices
             | Capability::Comprehensions
             | Capability::Generators
-            | Capability::Classes => Support::Native,
+            | Capability::Classes
+            | Capability::FStrings
+            | Capability::OperatorCall => Support::Native,
+            Capability::MultipleAssignment => Support::Desugared,
             _ => Support::Unsupported,
         }
     }

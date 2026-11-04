@@ -404,3 +404,51 @@ fn project_rust_output_builds_with_cargo() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&destination);
 }
+
+#[test]
+fn capabilities_command_prints_target_matrix() {
+    let output = gset()
+        .args(["capabilities", "--target", "rust"])
+        .output()
+        .expect("spawn gset");
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("classes"));
+    assert!(text.contains("native"));
+    assert!(text.contains("imports"));
+
+    let json = gset()
+        .args(["capabilities", "--target", "rust", "--json"])
+        .output()
+        .expect("spawn gset");
+    assert!(json.status.success());
+    let json_text = String::from_utf8_lossy(&json.stdout);
+    assert!(json_text.contains("\"capability\""));
+    assert!(json_text.contains("\"support\""));
+}
+
+#[test]
+fn mcp_server_responds_to_initialize() {
+    use std::io::Write;
+    let mut child = gset()
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn gset");
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(
+            stdin,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{}}}}"#
+        )
+        .unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list"}}"#).unwrap();
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait gset");
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("\"protocolVersion\""));
+    assert!(text.contains("\"transpile_snippet\""));
+}
