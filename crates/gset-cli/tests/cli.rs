@@ -362,3 +362,45 @@ fn go_project_import_passes_python_syntax_check() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&destination);
 }
+
+#[test]
+fn project_rust_output_builds_with_cargo() {
+    let root = std::env::temp_dir().join(format!("gset-cli-rustproj-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("main.py"),
+        "def value():\n    return 1\n\nprint(value())\n",
+    )
+    .unwrap();
+
+    let destination =
+        std::env::temp_dir().join(format!("gset-cli-rustproj-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&destination);
+    let output = Command::new(env!("CARGO_BIN_EXE_gset"))
+        .arg("transpile")
+        .arg(&root)
+        .args(["--to", "rust", "-o"])
+        .arg(&destination)
+        .output()
+        .expect("spawn gset");
+    assert!(
+        output.status.success(),
+        "rust project transpile failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let build = Command::new("cargo")
+        .current_dir(&destination)
+        .arg("build")
+        .output()
+        .expect("cargo");
+    assert!(
+        build.status.success(),
+        "cargo build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&destination);
+}
