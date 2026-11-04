@@ -1,9 +1,9 @@
 backend    arguments
 backend    async_flow
 backend    classes
-malformed  comprehensions
+ok         comprehensions
 backend    context_managers
-malformed  declaration_after_if
+ok         declaration_after_if
 backend    declarations
 backend    decorators
 backend    destructuring
@@ -15,11 +15,11 @@ backend    imports
 backend    lambdas
 backend    literals
 backend    loops
-malformed  module_shape
+ok         module_shape
 backend    null_handling
 backend    numeric_literals
 backend    operators
-malformed  returns
+ok         returns
 backend    typed
 
-1 ok / 0 frontend / 18 backend / 4 malformed
+5 ok / 0 frontend / 18 backend / 0 malformed

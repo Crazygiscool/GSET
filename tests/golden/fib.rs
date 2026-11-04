@@ -50,6 +50,46 @@ impl Value {
             _ => 0,
         }
     }
+    pub fn as_float(&self) -> f64 {
+        match self {
+            Value::Float(v) => *v,
+            Value::Int(v) => *v as f64,
+            Value::Bool(v) => if *v { 1.0 } else { 0.0 },
+            Value::Str(v) => v.parse::<f64>().unwrap_or(0.0),
+            _ => 0.0,
+        }
+    }
+    pub fn as_bool(&self) -> bool {
+        match self {
+            Value::Bool(v) => *v,
+            Value::Int(v) => *v != 0,
+            Value::Float(v) => *v != 0.0,
+            Value::Str(v) => !v.is_empty(),
+            Value::List(v) => !v.is_empty(),
+            Value::Map(v) => !v.is_empty(),
+            _ => false,
+        }
+    }
+    pub fn as_str(&self) -> String {
+        match self {
+            Value::Str(v) => v.clone(),
+            Value::Int(v) => v.to_string(),
+            Value::Float(v) => v.to_string(),
+            Value::Bool(v) => v.to_string(),
+            Value::Null => String::new(),
+            _ => format!("{:?}", self),
+        }
+    }    pub fn get_index(&self, index: usize) -> Value {
+        match self {
+            Value::List(v) => v.get(index).cloned().unwrap_or(Value::Null),
+            Value::Str(v) => v
+                .chars()
+                .nth(index)
+                .map(|value| Value::Str(value.to_string()))
+                .unwrap_or(Value::Null),
+            _ => Value::Null,
+        }
+    }
     pub fn gset_truthy(&self) -> bool {
         match self {
             Value::Bool(v) => *v,
@@ -160,6 +200,61 @@ impl std::cmp::PartialEq for Value {
     }
 }
 
+impl Eq for Value {}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Int(v) => {
+                0u8.hash(state);
+                v.hash(state);
+            }
+            Value::Float(v) => {
+                1u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Value::Bool(v) => {
+                2u8.hash(state);
+                v.hash(state);
+            }
+            Value::Str(v) => {
+                3u8.hash(state);
+                v.hash(state);
+            }
+            Value::List(v) => {
+                4u8.hash(state);
+                v.hash(state);
+            }
+            Value::Map(v) => {
+                5u8.hash(state);
+                for (key, value) in v.iter() {
+                    key.hash(state);
+                    value.hash(state);
+                }
+            }
+            Value::Null => {
+                6u8.hash(state);
+            }
+        }
+    }
+}
+
+impl IntoIterator for Value {
+    type Item = Value;
+    type IntoIter = std::vec::IntoIter<Value>;
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Value::List(values) => values.into_iter(),
+            Value::Map(values) => values
+                .into_iter()
+                .map(|(key, value)| Value::List(vec![Value::Str(key), value]))
+                .collect::<Vec<_>>()
+                .into_iter(),
+            _ => Vec::new().into_iter(),
+        }
+    }
+}
+
 impl std::cmp::PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (self, other) {
@@ -216,6 +311,13 @@ impl Default for Value {
 
 fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
 fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
+
+fn gset_tuple_2(value: Value) -> (Value, Value) {
+    match value {
+        Value::List(values) if values.len() >= 2 => (values[0].clone(), values[1].clone()),
+        _ => (Value::Null, Value::Null),
+    }
+}
 
 impl std::ops::Add<Value> for i64 {
     type Output = Value;

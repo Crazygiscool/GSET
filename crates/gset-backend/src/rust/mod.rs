@@ -9,8 +9,8 @@
 use std::collections::HashSet;
 
 use gset_ir::{
-    BinaryOp, Block, Else, Expr, ExprKind, Function, Item, Literal, LogicalOp, Module, Pattern,
-    PatternKind, SourceMap, Span, Stmt, Type, UnaryOp,
+    BinaryOp, Block, ComprehensionKind, Else, Expr, ExprKind, Function, Item, Literal, LogicalOp,
+    Module, Pattern, PatternKind, SourceMap, Span, Stmt, Type, UnaryOp,
 };
 
 use crate::Backend;
@@ -92,14 +92,31 @@ impl Backend for Rust {
         }
 
         let mut function_names = HashSet::new();
+        let mut class_method_names = HashSet::new();
+        let mut function_param_types = std::collections::HashMap::new();
         for item in &module.items {
             if let Item::Function(function) = item {
                 function_names.insert(function.name.to_string());
+                function_param_types
+                    .insert(function.name.to_string(), function.param_types.clone());
+            }
+            if let Item::Class(class) = item {
+                for method in &class.methods {
+                    class_method_names.insert(method.name.to_string());
+                }
+                if let Some(constructor) = class.constructors.first() {
+                    for method in std::iter::once(constructor) {
+                        class_method_names.insert(method.name.to_string());
+                    }
+                }
             }
         }
         let mut emitter = RustEmitter {
             classes: class_names.clone(),
+            class_methods: class_method_names,
             functions: function_names,
+            function_param_types,
+            hoisted: HashSet::new(),
             self_name: "self".to_string(),
             generator_mode: false,
             current_return_type: String::new(),
@@ -123,7 +140,10 @@ impl Backend for Rust {
 
 struct RustEmitter<'a> {
     classes: HashSet<String>,
+    class_methods: HashSet<String>,
     functions: HashSet<String>,
+    function_param_types: std::collections::HashMap<String, Vec<Option<Type>>>,
+    hoisted: HashSet<String>,
     self_name: String,
     generator_mode: bool,
     current_return_type: String,
@@ -252,8 +272,14 @@ impl RustEmitter<'_> {
                         };
                         let value = wrap_rust_expr(&target_ty, &value.ty, self.expr(value));
                         self.locals.insert(binding.to_string(), target_ty.clone());
-                        self.writer
-                            .writeln(&format!("let mut {}: {} = {};", binding, target_ty, value));
+                        if self.hoisted.contains(&binding.to_string()) {
+                            self.writer.writeln(&format!("{} = {};", binding, value));
+                        } else {
+                            self.writer.writeln(&format!(
+                                "let mut {}: {} = {};",
+                                binding, target_ty, value
+                            ));
+                        }
                     } else {
                         unsupported_marker(
                             self.diagnostics,
@@ -263,8 +289,10 @@ impl RustEmitter<'_> {
                     }
                 } else if let Some(binding) = decl.pattern.single_binding() {
                     self.locals.insert(binding.to_string(), "Value".to_string());
-                    self.writer
-                        .writeln(&format!("let mut {}: Value = Value::Int(0);", binding));
+                    if !self.hoisted.contains(&binding.to_string()) {
+                        self.writer
+                            .writeln(&format!("let mut {}: Value = Value::Int(0);", binding));
+                    }
                 }
             }
             Stmt::Expr(expr) => {
@@ -312,11 +340,23 @@ impl RustEmitter<'_> {
                     let binding = pattern_binding(target);
                     let local_type = self.locals.get(&binding).cloned();
                     if let Some(target_type) = local_type {
-                        let assigned = wrap_rust_expr(&target_type, &value.ty, self.expr(value));
+                        let use_as = target_type == "Value"
+                            && (matches!(
+                                value.ty,
+                                gset_ir::Type::Int(_) | gset_ir::Type::Unknown(_)
+                            ));
+                        let assigned = if use_as {
+                            match &value.ty {
+                                gset_ir::Type::Unknown(_) => self.expr(value),
+                                _ => format!("Value::Int({}.as_int())", self.expr(value)),
+                            }
+                        } else {
+                            wrap_rust_expr(&target_type, &value.ty, self.expr(value))
+                        };
                         self.writer.writeln(&format!("{} = {};", binding, assigned));
                     } else {
                         let target_ty = if rust_type(&value.ty) == "i64" {
-                            "Value".to_string()
+                            "i64".to_string()
                         } else {
                             rust_type(&value.ty)
                         };
@@ -375,6 +415,49 @@ impl RustEmitter<'_> {
                 else_branch,
                 ..
             } => {
+                let mut hoisted_names = HashSet::new();
+                for statement in &then_branch.statements {
+                    match statement {
+                        Stmt::Decl(decl) => {
+                            if let Some(binding) = decl.pattern.single_binding() {
+                                hoisted_names.insert(binding.to_string());
+                            }
+                        }
+                        Stmt::Assign { target, .. } if matches!(target.kind, PatternKind::Bind) => {
+                            hoisted_names.insert(pattern_binding(target));
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(boxed) = else_branch.as_ref() {
+                    if let Else::Block(block) = boxed.as_ref() {
+                        for statement in &block.statements {
+                            match statement {
+                                Stmt::Decl(decl) => {
+                                    if let Some(binding) = decl.pattern.single_binding() {
+                                        hoisted_names.insert(binding.to_string());
+                                    }
+                                }
+                                Stmt::Assign { target, .. }
+                                    if matches!(target.kind, PatternKind::Bind) =>
+                                {
+                                    hoisted_names.insert(pattern_binding(target));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                let previous_hoisted = self.hoisted.clone();
+                for name in &hoisted_names {
+                    if !self.locals.contains_key(name) {
+                        self.locals.insert(name.clone(), "Value".to_string());
+                        self.writer
+                            .writeln(&format!("let mut {}: Value = Default::default();", name));
+                    }
+                    self.hoisted.insert(name.clone());
+                }
                 let condition = self.truthy(condition);
                 self.writer.writeln(&format!("if {} {{", condition));
                 self.writer.indent();
@@ -403,6 +486,7 @@ impl RustEmitter<'_> {
                     self.writer.writeln("}");
                     self.writer.writeln(";");
                 }
+                self.hoisted = previous_hoisted;
             }
             Stmt::While {
                 condition, body, ..
@@ -576,7 +660,7 @@ impl RustEmitter<'_> {
         match &expr.ty {
             gset_ir::Type::Bool => rendered,
             gset_ir::Type::Int(_) => format!("({} != 0)", rendered),
-            gset_ir::Type::Unknown(_) => format!("gset_truthy(&Value::Int({}))", rendered),
+            gset_ir::Type::Unknown(_) => format!("gset_truthy(&{})", rendered),
             gset_ir::Type::Float => format!("gset_truthy(&Value::Float({}))", rendered),
             gset_ir::Type::Str | gset_ir::Type::StrLit | gset_ir::Type::Char => {
                 format!("gset_truthy(&Value::Str({}))", rendered)
@@ -690,7 +774,10 @@ impl RustEmitter<'_> {
             ..
         } = &expr.kind
         {
-            if !RustPythonApiRegistry::supports_method(method) {
+            if !RustPythonApiRegistry::supports_method(method)
+                && !self.class_methods.contains(&method.to_string())
+                && !method.to_string().starts_with("__")
+            {
                 return unsupported_expr(self.diagnostics, expr.span);
             }
             if named_args.is_empty() {
@@ -855,7 +942,26 @@ impl RustEmitter<'_> {
                     } else {
                         self.expr(lhs)
                     };
-                    let rhs = self.expr(rhs);
+                    let rhs = if matches!(right_type, Type::Unknown(_))
+                        && (matches!(left_type, Type::Int(_) | Type::Bool))
+                    {
+                        format!("{}.as_int()", self.expr(rhs))
+                    } else if matches!(right_type, Type::Int(_) | Type::Bool)
+                        && matches!(left_type, Type::Int(_) | Type::Bool)
+                        && if let ExprKind::Path(path) = &rhs.kind {
+                            path.is_bare()
+                                && self
+                                    .locals
+                                    .get(path.segments.first().map(|s| s.as_ref()).unwrap_or(""))
+                                    == Some(&"Value".to_string())
+                        } else {
+                            false
+                        }
+                    {
+                        format!("{}.as_int()", self.expr(rhs))
+                    } else {
+                        self.expr(rhs)
+                    };
                     format!("{} {} {}", lhs, op, rhs)
                 }
             }
@@ -972,10 +1078,43 @@ impl RustEmitter<'_> {
                         _ => {}
                     }
                 }
+                let user_function = if let ExprKind::Path(path) = &callee.kind {
+                    path.is_bare()
+                        && self
+                            .functions
+                            .contains(path.segments.first().map(|s| s.as_ref()).unwrap_or(""))
+                } else {
+                    false
+                };
+                let callee_name = if user_function {
+                    if let ExprKind::Path(path) = &callee.kind {
+                        path.segments
+                            .first()
+                            .map(|s| s.to_string())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
                 let callee = self.expr(callee);
                 let args = args
                     .iter()
-                    .map(|arg| self.expr(arg))
+                    .enumerate()
+                    .map(|(index, arg)| {
+                        if user_function {
+                            let parameter_type = self
+                                .function_param_types
+                                .get(&callee_name)
+                                .and_then(|types| types.get(index))
+                                .and_then(|ty| ty.clone())
+                                .unwrap_or(gset_ir::Type::UNKNOWN);
+                            wrap_rust_expr(&rust_type(&parameter_type), &arg.ty, self.expr(arg))
+                        } else {
+                            self.expr(arg)
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("{}({})", callee, args)
@@ -1010,6 +1149,9 @@ impl RustEmitter<'_> {
                 if is_map {
                     let index = self.expr(index);
                     format!("{}.get(&{}).cloned().unwrap()", target_expr, index)
+                } else if matches!(target.ty, Type::Unknown(_)) {
+                    let index = self.expr(index);
+                    format!("{}.get_index({} as usize)", target_expr, index)
                 } else {
                     format!("{}[{} as usize]", target_expr, self.expr(index))
                 }
@@ -1113,14 +1255,36 @@ impl RustEmitter<'_> {
                 format!("|{}| {}", params, self.expr(body))
             }
             ExprKind::Comprehension {
+                kind,
                 element,
                 clauses,
                 condition,
+                key,
+                value,
                 ..
             } => {
-                let mut out = String::from("{ let mut __out = Vec::new(); ");
-                for clause in clauses {
-                    let target = pattern_binding(&clause.pattern);
+                let mut out = String::from("{ ");
+                let rust_ty = rust_type(&expr.ty);
+                match kind {
+                    ComprehensionKind::Set => {
+                        out.push_str(&format!(
+                            "let mut __out: {} = std::collections::HashSet::new(); ",
+                            rust_ty
+                        ));
+                    }
+                    ComprehensionKind::Map => {
+                        out.push_str(&format!(
+                            "let mut __out: {} = std::collections::HashMap::new(); ",
+                            rust_ty
+                        ));
+                    }
+                    ComprehensionKind::List | ComprehensionKind::Generator => {
+                        out.push_str(&format!("let mut __out: {} = Vec::new(); ", rust_ty));
+                    }
+                }
+                let saved_locals = self.locals.clone();
+                for (clause_index, clause) in clauses.iter().enumerate() {
+                    let target_bindings = pattern_bindings(&clause.pattern);
                     let iterable = match &clause.iterable.kind {
                         ExprKind::Range { start, end, .. } => {
                             let start = start
@@ -1144,20 +1308,62 @@ impl RustEmitter<'_> {
                         }
                         _ => self.expr(&clause.iterable),
                     };
-                    out.push_str(&format!("for mut {} in {} {{ ", target, iterable));
+                    if target_bindings.len() <= 1 {
+                        let target = if target_bindings.is_empty() {
+                            "_".to_string()
+                        } else {
+                            target_bindings[0].clone()
+                        };
+                        if target != "_" {
+                            self.locals.insert(target.clone(), "Value".to_string());
+                        }
+                        out.push_str(&format!("for {} in {} {{ ", target, iterable));
+                    } else {
+                        let clause_var = format!("__gset_clause_{}", clause_index);
+                        out.push_str(&format!("for {} in {} {{ ", clause_var, iterable));
+                        out.push_str(&format!(
+                            "let ({}) = gset_tuple_{}({}.clone()); ",
+                            target_bindings.join(", "),
+                            target_bindings.len(),
+                            clause_var
+                        ));
+                        for target in &target_bindings {
+                            self.locals.insert(target.clone(), "Value".to_string());
+                        }
+                    }
                 }
                 if condition.is_some() {
                     if let Some(condition) = condition.as_ref() {
                         out.push_str(&format!("if {} {{ ", self.expr(condition)));
                     }
                 }
-                out.push_str(&format!("__out.push({}); ", self.expr(element)));
+                match kind {
+                    ComprehensionKind::Map => {
+                        let key = key
+                            .as_ref()
+                            .map(|expr| self.expr(expr))
+                            .unwrap_or_else(|| unsupported_expr(self.diagnostics, expr.span));
+                        let value = value
+                            .as_ref()
+                            .map(|expr| self.expr(expr))
+                            .unwrap_or_else(|| unsupported_expr(self.diagnostics, expr.span));
+                        out.push_str(&format!("__out.insert({}, {}); ", key, value));
+                    }
+                    ComprehensionKind::Set => {
+                        let inserted = self.expr(element);
+                        out.push_str(&format!("__out.insert({}); ", inserted));
+                    }
+                    ComprehensionKind::List | ComprehensionKind::Generator => {
+                        out.push_str(&format!("__out.push({}); ", self.expr(element)));
+                    }
+                }
                 if condition.is_some() {
                     out.push_str("} ");
                 }
                 for _ in clauses {
                     out.push_str("} ");
                 }
+                self.locals = saved_locals;
                 out.push_str("__out }");
                 out
             }
@@ -1647,6 +1853,9 @@ fn emit_class(
                     let mut emitter = RustEmitter {
                         classes: HashSet::new(),
                         functions: HashSet::new(),
+                        class_methods: HashSet::new(),
+                        function_param_types: std::collections::HashMap::new(),
+                        hoisted: HashSet::new(),
                         self_name: "__self".to_string(),
                         generator_mode: false,
                         current_return_type: "Value".to_string(),
@@ -1710,6 +1919,9 @@ fn emit_class(
         let mut emitter = RustEmitter {
             classes: HashSet::new(),
             functions: HashSet::new(),
+            class_methods: HashSet::new(),
+            function_param_types: std::collections::HashMap::new(),
+            hoisted: HashSet::new(),
             self_name: "self".to_string(),
             generator_mode: false,
             current_return_type: "Value".to_string(),
@@ -1787,6 +1999,46 @@ impl Value {
             Value::Float(v) => *v as i64,
             Value::Str(v) => v.parse::<i64>().unwrap_or(0),
             _ => 0,
+        }
+    }
+    pub fn as_float(&self) -> f64 {
+        match self {
+            Value::Float(v) => *v,
+            Value::Int(v) => *v as f64,
+            Value::Bool(v) => if *v { 1.0 } else { 0.0 },
+            Value::Str(v) => v.parse::<f64>().unwrap_or(0.0),
+            _ => 0.0,
+        }
+    }
+    pub fn as_bool(&self) -> bool {
+        match self {
+            Value::Bool(v) => *v,
+            Value::Int(v) => *v != 0,
+            Value::Float(v) => *v != 0.0,
+            Value::Str(v) => !v.is_empty(),
+            Value::List(v) => !v.is_empty(),
+            Value::Map(v) => !v.is_empty(),
+            _ => false,
+        }
+    }
+    pub fn as_str(&self) -> String {
+        match self {
+            Value::Str(v) => v.clone(),
+            Value::Int(v) => v.to_string(),
+            Value::Float(v) => v.to_string(),
+            Value::Bool(v) => v.to_string(),
+            Value::Null => String::new(),
+            _ => format!("{:?}", self),
+        }
+    }    pub fn get_index(&self, index: usize) -> Value {
+        match self {
+            Value::List(v) => v.get(index).cloned().unwrap_or(Value::Null),
+            Value::Str(v) => v
+                .chars()
+                .nth(index)
+                .map(|value| Value::Str(value.to_string()))
+                .unwrap_or(Value::Null),
+            _ => Value::Null,
         }
     }
     pub fn gset_truthy(&self) -> bool {
@@ -1899,6 +2151,61 @@ impl std::cmp::PartialEq for Value {
     }
 }
 
+impl Eq for Value {}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Int(v) => {
+                0u8.hash(state);
+                v.hash(state);
+            }
+            Value::Float(v) => {
+                1u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Value::Bool(v) => {
+                2u8.hash(state);
+                v.hash(state);
+            }
+            Value::Str(v) => {
+                3u8.hash(state);
+                v.hash(state);
+            }
+            Value::List(v) => {
+                4u8.hash(state);
+                v.hash(state);
+            }
+            Value::Map(v) => {
+                5u8.hash(state);
+                for (key, value) in v.iter() {
+                    key.hash(state);
+                    value.hash(state);
+                }
+            }
+            Value::Null => {
+                6u8.hash(state);
+            }
+        }
+    }
+}
+
+impl IntoIterator for Value {
+    type Item = Value;
+    type IntoIter = std::vec::IntoIter<Value>;
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Value::List(values) => values.into_iter(),
+            Value::Map(values) => values
+                .into_iter()
+                .map(|(key, value)| Value::List(vec![Value::Str(key), value]))
+                .collect::<Vec<_>>()
+                .into_iter(),
+            _ => Vec::new().into_iter(),
+        }
+    }
+}
+
 impl std::cmp::PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (self, other) {
@@ -1955,6 +2262,13 @@ impl Default for Value {
 
 fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
 fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
+
+fn gset_tuple_2(value: Value) -> (Value, Value) {
+    match value {
+        Value::List(values) if values.len() >= 2 => (values[0].clone(), values[1].clone()),
+        _ => (Value::Null, Value::Null),
+    }
+}
 
 impl std::ops::Add<Value> for i64 {
     type Output = Value;
