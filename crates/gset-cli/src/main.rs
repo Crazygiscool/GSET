@@ -25,6 +25,8 @@ use clap::{Parser, Subcommand};
 use gset_backend::TargetId;
 use gset_cli::{Output, PipelineError, transpile_with_options};
 
+mod validate;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "gset",
@@ -61,6 +63,12 @@ enum Command {
         /// Enable experimental backend-specific API mappings
         #[arg(long, name = "experimental-api-map")]
         experimental_api_map: bool,
+        /// Print the result as JSON
+        #[arg(long)]
+        json: bool,
+        /// Run the native validation gate
+        #[arg(long)]
+        validate: bool,
     },
     /// Transpile a source file, then execute it on the target runtime
     Run {
@@ -79,6 +87,17 @@ enum Command {
         #[arg(long, name = "experimental-api-map")]
         experimental_api_map: bool,
     },
+    /// Validate source or generated target code
+    Validate {
+        /// Source or project file to validate
+        path: PathBuf,
+        /// Target language to validate
+        #[arg(long, short = 't', visible_alias = "target", default_value = "rust")]
+        to: String,
+        /// Print the result as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the version
     Version,
 }
@@ -95,6 +114,8 @@ fn main() -> ExitCode {
             output,
             verbose,
             experimental_api_map,
+            json,
+            validate,
         } => transpile_command(
             &path,
             &to,
@@ -103,6 +124,8 @@ fn main() -> ExitCode {
             output.as_deref(),
             verbose,
             experimental_api_map,
+            validate,
+            json,
         ),
         Command::Run {
             path,
@@ -111,6 +134,7 @@ fn main() -> ExitCode {
             keep,
             experimental_api_map,
         } => run_command(&path, &to, from.as_deref(), keep, experimental_api_map),
+        Command::Validate { path, to, json } => validate::validate_command(&path, &to, json),
         Command::Version => {
             println!("GSET v{}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -118,6 +142,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn transpile_directory(
     root: &Path,
     target: &str,
@@ -126,6 +151,8 @@ fn transpile_directory(
     destination: Option<&Path>,
     verbose: bool,
     experimental_api_map: bool,
+    validate: bool,
+    json: bool,
 ) -> ExitCode {
     if experimental_api_map {
         gset_backend::set_experimental_api_map(true);
@@ -564,10 +591,98 @@ fn main() {
             module_names.join(", ")
         );
         let _ = std::fs::write(&report_path, report_text);
-        eprintln!("gset: migration report: {}", report_path.display());
+
+        let mut validation_failed = false;
+        if validate {
+            for file in collect_generated_files(&output_root, extension.trim_start_matches('.')) {
+                let report = validate::validate_file(target, &file);
+                if report.status == validate::NativeValidation::Failed {
+                    validation_failed = true;
+                    eprintln!("gset: native validation failed for {}", file.display());
+                }
+            }
+        }
+
+        if json {
+            let json = format!(
+                "{{\"source_root\":{},\"target\":\"{}\",\"generated_files\":{},\"modules\":{},\"report\":{}}}",
+                json_escape(&root.display().to_string()),
+                target,
+                generated_files,
+                json_array(&module_names),
+                json_escape(&report_path.display().to_string())
+            );
+            println!("{}", json);
+        } else {
+            eprintln!("gset: migration report: {}", report_path.display());
+        }
+        if json {
+            eprintln!("gset: output report {}", report_path.display());
+        }
+        let _ = validate;
         write_content_hash(&output_root, content_hash);
-        ExitCode::SUCCESS
+        if validation_failed {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        }
     }
+}
+
+fn collect_generated_files(root: &Path, extension: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(collect_generated_files(&path, extension));
+            } else if extension.is_empty()
+                || path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext == extension)
+                    .unwrap_or(false)
+            {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
+fn json_escape(value: &str) -> String {
+    let mut result = String::from("\"");
+    for ch in value.chars() {
+        if ch == '"' {
+            result.push_str("\\\"");
+        } else if ch == '\\' {
+            result.push_str("\\\\");
+        } else if ch == '\n' {
+            result.push_str("\\n");
+        } else if ch == '\r' {
+            result.push_str("\\r");
+        } else if ch == '\t' {
+            result.push_str("\\t");
+        } else if ch.is_control() {
+            result.push_str(&format!("\\u{:04x}", ch as u32));
+        } else {
+            result.push(ch);
+        }
+    }
+    result.push('"');
+    result
+}
+
+fn json_array(values: &[String]) -> String {
+    let mut out = String::from("[");
+    for (index, value) in values.iter().enumerate() {
+        if index != 0 {
+            out.push(',');
+        }
+        out.push_str(&json_escape(value));
+    }
+    out.push(']');
+    out
 }
 
 fn ecosystem_for_source(path: &Path) -> gset_deps::Ecosystem {
@@ -647,6 +762,7 @@ fn write_content_hash(root: &Path, hash: u64) {
     let _ = std::fs::write(root.join(".gsetcache"), hash.to_string());
 }
 
+#[allow(clippy::too_many_arguments)]
 fn transpile_command(
     path: &Path,
     target: &str,
@@ -655,6 +771,8 @@ fn transpile_command(
     destination: Option<&Path>,
     verbose: bool,
     experimental_api_map: bool,
+    validate: bool,
+    json: bool,
 ) -> ExitCode {
     if path.is_dir() {
         return transpile_directory(
@@ -665,6 +783,8 @@ fn transpile_command(
             destination,
             verbose,
             experimental_api_map,
+            validate,
+            json,
         );
     }
     if experimental_api_map {
@@ -675,22 +795,52 @@ fn transpile_command(
         Err(code) => return code,
     };
 
+    let mut report_validated = None;
+    if validate {
+        report_validated = Some(validate::validate_file(target, path));
+    }
+
     report(&output, verbose);
 
-    // Generated code is written even on failure, because partial output is how
-    // a user sees what did translate; the exit code still reflects the errors.
+    // Generated code is written even on failure...
     match destination {
         Some(destination) => {
             if let Err(error) = std::fs::write(destination, &output.text) {
                 eprintln!("gset: cannot write {}: {error}", destination.display());
                 return ExitCode::from(1);
             }
+            if validate {
+                report_validated = Some(validate::validate_file(target, destination));
+            }
         }
-        None => print!("{}", output.text),
+        None => {
+            if !json {
+                print!("{}", output.text);
+            }
+        }
+    }
+
+    if let Some(validation) = report_validated.as_ref()
+        && validation.status != validate::NativeValidation::Passed
+    {
+        eprintln!("gset: native validation {}", validation.status.code());
+        if !validation.stderr.is_empty() {
+            eprintln!("{}", validation.stderr);
+        }
+    }
+
+    if json {
+        println!("{}", output.to_json(&path.display().to_string(), target));
     }
 
     if output.failed {
         ExitCode::from(1)
+    } else if let Some(validation) = report_validated {
+        if validation.status == validate::NativeValidation::Failed {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        }
     } else {
         ExitCode::SUCCESS
     }

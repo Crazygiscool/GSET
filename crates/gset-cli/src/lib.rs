@@ -95,3 +95,84 @@ pub fn transpile_with_options(
         failed,
     })
 }
+
+impl Output {
+    /// Serialises one transpilation result as compact JSON.
+    pub fn to_json(&self, name: &str, target: &str) -> String {
+        let mut out = String::new();
+        out.push('{');
+        push_json_field(&mut out, "source", Some(name), false, false);
+        push_json_field(&mut out, "target", Some(target), true, false);
+        out.push_str(&format!(",\"failed\":{}", self.failed));
+        out.push_str(",\"diagnostics\":[");
+        for (index, diagnostic) in self.diagnostics.iter().enumerate() {
+            if index != 0 {
+                out.push(',');
+            }
+            out.push('{');
+            out.push_str(&format!(
+                "\"severity\":\"{}\"",
+                severity_name(diagnostic.severity)
+            ));
+            if let Some(code) = diagnostic.code {
+                out.push_str(&format!(",\"code\":{}", json_string(code)));
+            }
+            out.push_str(&format!(
+                ",\"message\":{},\"location\":{}",
+                json_string(&diagnostic.message),
+                json_string(&self.source_map.location(diagnostic.span))
+            ));
+            if let Some(help) = &diagnostic.help {
+                out.push_str(&format!(",\"help\":{}", json_string(help)));
+            }
+            out.push('}');
+        }
+        out.push_str("],");
+        out.push_str(&format!("\"text\":{}", json_string(&self.text)));
+        out.push('}');
+        out
+    }
+}
+
+fn push_json_field(
+    out: &mut String,
+    key: &str,
+    value: Option<&str>,
+    add_comma: bool,
+    _quoted: bool,
+) {
+    if add_comma {
+        out.push(',');
+    }
+    out.push_str(&format!("\"{}\"", key));
+    out.push(':');
+    match value {
+        Some(value) => out.push_str(&json_string(value)),
+        None => out.push_str("null"),
+    }
+}
+
+fn json_string(value: &str) -> String {
+    let mut result = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            ch if ch.is_control() => result.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => result.push(ch),
+        }
+    }
+    result.push('"');
+    result
+}
+
+fn severity_name(severity: gset_ir::Severity) -> &'static str {
+    match severity {
+        gset_ir::Severity::Error => "error",
+        gset_ir::Severity::Warning => "warning",
+        gset_ir::Severity::Info => "info",
+    }
+}
