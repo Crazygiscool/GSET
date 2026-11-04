@@ -286,6 +286,7 @@ fn transpile_directory(
     }
 
     let mut graph = gset_deps::ModuleGraph::new();
+    let mut external_dependencies = std::collections::BTreeSet::new();
     for (id, path) in &module_names {
         graph.add_module(gset_deps::ModuleId(id.clone()), path.clone());
     }
@@ -330,6 +331,7 @@ fn transpile_directory(
                         if let Err(error) = graph.add_dependency(&from_id, &dependency_node) {
                             eprintln!("gset: {source:?}: dependency graph: {error:?}");
                         }
+                        external_dependencies.insert(name.clone());
                         match &resolution {
                             gset_ir::ModuleSource::Sdk { runtime } => {
                                 eprintln!(
@@ -602,6 +604,19 @@ fn main() {
             module_names.len(),
             rust_modules.len(),
             module_names.join(", ")
+        );
+        let dependency_text = external_dependencies
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let report_text = format!(
+            "{}{}",
+            report_text,
+            if dependency_text.is_empty() {
+                String::new()
+            } else {
+                format!("dependencies: {}\n", dependency_text)
+            }
         );
         let _ = std::fs::write(&report_path, report_text);
 
