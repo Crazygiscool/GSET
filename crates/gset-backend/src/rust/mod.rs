@@ -691,7 +691,13 @@ impl RustEmitter<'_> {
         {
             return self.self_name.clone();
         }
-        if let ExprKind::Call { callee, args, .. } = &expr.kind {
+        if let ExprKind::Call {
+            callee,
+            args,
+            named_args,
+            ..
+        } = &expr.kind
+        {
             if let ExprKind::Path(path) = &callee.kind
                 && path.is_bare()
                 && path.segments.len() == 1
@@ -761,6 +767,27 @@ impl RustEmitter<'_> {
                     Some("sum") if args.len() == 1 => {
                         let arg = self.expr(&args[0]);
                         return format!("{}.iter().sum::<i64>()", arg);
+                    }
+                    Some("sorted") if (args.len() == 1 || args.len() == 2) => {
+                        let iterable = if args.is_empty() {
+                            self.expr(&args[0])
+                        } else {
+                            self.expr(&args[0])
+                        };
+                        let key = args
+                            .get(1)
+                            .map(|arg| self.expr(arg))
+                            .or_else(|| {
+                                named_args
+                                    .iter()
+                                    .find(|arg| arg.name.to_string() == "key")
+                                    .map(|arg| self.expr(&arg.value))
+                            })
+                            .unwrap_or_else(|| "gset_identity".to_string());
+                        return format!(
+                            "{{ let mut __sorted = {}.gset_iterate().clone(); __sorted.sort_by(|__left, __right| gset_value_cmp({}(__left.clone()), {}(__right.clone()))); __sorted }}",
+                            iterable, key, key
+                        );
                     }
                     _ => {}
                 }
@@ -2268,6 +2295,18 @@ impl Default for Value {
     fn default() -> Self { Value::Int(0) }
 }
 
+fn gset_value_cmp(left: Value, right: Value) -> std::cmp::Ordering {
+    match (left, right) {
+        (Value::Int(l), Value::Int(r)) => l.cmp(&r),
+        (Value::Float(l), Value::Float(r)) => l.partial_cmp(&r).unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Float(l), Value::Int(r)) => l.partial_cmp(&(r as f64)).unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Int(l), Value::Float(r)) => (l as f64).partial_cmp(&r).unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Str(l), Value::Str(r)) => l.cmp(&r),
+        (Value::Bool(l), Value::Bool(r)) => l.cmp(&r),
+        _ => std::cmp::Ordering::Equal,
+    }
+}
+fn gset_identity(value: Value) -> Value { value }
 fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
 fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
 

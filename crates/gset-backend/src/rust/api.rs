@@ -11,6 +11,7 @@ impl RustPythonApiRegistry {
         "abs",
         "chr",
         "enumerate",
+        "gset_value_cmp",
         "float",
         "int",
         "len",
@@ -19,6 +20,7 @@ impl RustPythonApiRegistry {
         "ord",
         "print",
         "range",
+        "sorted",
         "str",
         "sum",
     ];
@@ -26,6 +28,8 @@ impl RustPythonApiRegistry {
     pub const METHODS: &'static [&'static str] = &[
         "append",
         "endswith",
+        "gset_iterate",
+        "get_index",
         "get",
         "len",
         "lower",
