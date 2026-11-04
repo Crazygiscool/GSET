@@ -19,6 +19,9 @@ use crate::writer::CodeWriter;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod api;
+pub use api::RustPythonApiRegistry;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Rust;
 
@@ -607,6 +610,18 @@ impl RustEmitter<'_> {
         if let ExprKind::Call { callee, args, .. } = &expr.kind {
             if let ExprKind::Path(path) = &callee.kind
                 && path.is_bare()
+                && path.segments.len() == 1
+            {
+                let name = path.segments[0].to_string();
+                if !RustPythonApiRegistry::supports_free_function(&name)
+                    && !self.functions.contains(&name)
+                    && !self.classes.contains(&name)
+                {
+                    return unsupported_expr(self.diagnostics, expr.span);
+                }
+            }
+            if let ExprKind::Path(path) = &callee.kind
+                && path.is_bare()
             {
                 match path.segments.first().map(|s| s.as_ref()) {
                     Some("len") if args.len() == 1 => {
@@ -675,6 +690,9 @@ impl RustEmitter<'_> {
             ..
         } = &expr.kind
         {
+            if !RustPythonApiRegistry::supports_method(method) {
+                return unsupported_expr(self.diagnostics, expr.span);
+            }
             if named_args.is_empty() {
                 match method.as_ref() {
                     "upper" | "to_uppercase" => {
