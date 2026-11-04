@@ -8,13 +8,34 @@ pub struct RustPythonApiRegistry;
 
 impl RustPythonApiRegistry {
     pub const FREE_FUNCTIONS: &'static [&'static str] = &[
-        "abs", "chr", "enumerate", "float", "int", "len", "min", "max", "ord", "print",
-        "range", "str", "sum",
+        "abs",
+        "chr",
+        "enumerate",
+        "float",
+        "int",
+        "len",
+        "min",
+        "max",
+        "ord",
+        "print",
+        "range",
+        "str",
+        "sum",
     ];
 
     pub const METHODS: &'static [&'static str] = &[
-        "endswith", "get", "len", "lower", "replace", "split", "startswith", "strip", "trim",
-        "to_lowercase", "to_uppercase", "upper",
+        "endswith",
+        "get",
+        "len",
+        "lower",
+        "replace",
+        "split",
+        "startswith",
+        "strip",
+        "trim",
+        "to_lowercase",
+        "to_uppercase",
+        "upper",
     ];
 
     pub fn supports_free_function(name: &str) -> bool {

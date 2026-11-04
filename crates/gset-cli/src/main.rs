@@ -365,7 +365,7 @@ fn transpile_directory(
         .map(|&index| project_files[index].2.take().expect("module is present"))
         .collect();
     let project_diagnostics = gset_semantic::infer_project(&mut project_modules);
-    for (index, module) in module_indices.iter().zip(project_modules.into_iter()) {
+    for (index, module) in module_indices.iter().zip(project_modules) {
         project_files[*index].2 = Some(module);
     }
     if !project_diagnostics.is_empty() {
@@ -447,7 +447,7 @@ fn transpile_directory(
                     if out.is_empty() {
                         "module".to_string()
                     } else if !out.chars().next().unwrap().is_ascii_alphabetic()
-                        && out.chars().next().unwrap() != '_'
+                        && !out.starts_with('_')
                     {
                         format!("_{}", out)
                     } else {
@@ -475,7 +475,12 @@ fn transpile_directory(
             overall_failed = true;
             continue;
         }
-        if let Err(error) = std::fs::write(&destination_path, &output.text) {
+        let output_text = if target == "rust" {
+            output.text.replacen("fn main() {", "pub fn main() {", 1)
+        } else {
+            output.text.clone()
+        };
+        if let Err(error) = std::fs::write(&destination_path, &output_text) {
             eprintln!("gset: cannot write {}: {error}", destination_path.display());
             overall_failed = true;
             continue;
@@ -545,11 +550,18 @@ fn main() {
             .flatten()
             .filter(|entry| entry.is_ok())
             .count();
+        let modules = rust_modules.clone();
+        let mut module_names = modules.clone();
+        module_names.sort();
+        module_names.dedup();
         let report_text = format!(
-            "GSET port report\nsource_root: {}\ntarget: {}\ngenerated files: {}\n",
+            "GSET port report\nsource_root: {}\ntarget: {}\ngenerated files: {}\nmodules: {} ({} files)\nmodule_names: {}\n",
             root.display(),
             target,
-            generated_files
+            generated_files,
+            module_names.len(),
+            rust_modules.len(),
+            module_names.join(", ")
         );
         let _ = std::fs::write(&report_path, report_text);
         eprintln!("gset: migration report: {}", report_path.display());
@@ -577,10 +589,10 @@ fn module_name_for(root: &Path, source: &Path) -> String {
     let relative = source.strip_prefix(root).unwrap_or(source);
     let mut parts: Vec<String> = Vec::new();
     for component in relative.components() {
-        if let std::path::Component::Normal(name) = component {
-            if let Some(value) = name.to_str() {
-                parts.push(value.to_string());
-            }
+        if let std::path::Component::Normal(name) = component
+            && let Some(value) = name.to_str()
+        {
+            parts.push(value.to_string());
         }
     }
     let Some(last) = parts.pop() else {

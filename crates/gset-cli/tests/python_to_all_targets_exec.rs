@@ -302,10 +302,6 @@ fn run_cls_python_vs_java() {
     assert_eq!(want.status.code(), got.status.code());
 }
 
-fn python_out_value() -> String {
-    "55\n".to_string()
-}
-
 fn rust_run(code: &str) -> (String, Option<i32>) {
     let dir = std::env::temp_dir().join("gset-diff-pyrust");
     let _ = std::fs::remove_dir_all(&dir);
