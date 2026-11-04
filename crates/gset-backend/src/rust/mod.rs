@@ -766,19 +766,39 @@ impl RustEmitter<'_> {
                     _ => return unsupported_expr(self.diagnostics, expr.span),
                 };
                 let has_float = matches!(lhs.ty, Type::Float) || matches!(rhs.ty, Type::Float);
-                let lhs_type = lhs.ty.clone();
-                let rhs_type = rhs.ty.clone();
-                let lhs = if has_float && matches!(lhs_type, Type::Int(_) | Type::Bool) {
-                    format!("({}) as f64", self.expr(lhs))
+                let gauche = lhs.ty.clone();
+                let rhs_kind = rhs.ty.clone();
+                if has_float {
+                    let lhs = if matches!(gauche, Type::Int(_) | Type::Bool) {
+                        format!("({}) as f64", self.expr(lhs))
+                    } else {
+                        self.expr(lhs)
+                    };
+                    let rhs = if matches!(rhs_kind, Type::Int(_) | Type::Bool) {
+                        format!("({}) as f64", self.expr(rhs))
+                    } else {
+                        self.expr(rhs)
+                    };
+                    format!("{} {} {}", lhs, op, rhs)
                 } else {
-                    self.expr(lhs)
-                };
-                let rhs = if has_float && matches!(rhs_type, Type::Int(_) | Type::Bool) {
-                    format!("({}) as f64", self.expr(rhs))
-                } else {
-                    self.expr(rhs)
-                };
-                format!("{} {} {}", lhs, op, rhs)
+                    let left_type = lhs.ty.clone();
+                    let right_type = rhs.ty.clone();
+                    let lhs = if matches!(left_type, Type::Int(_) | Type::Bool)
+                        && matches!(right_type, Type::Unknown(_))
+                    {
+                        format!("Value::Int({})", self.expr(lhs))
+                    } else {
+                        self.expr(lhs)
+                    };
+                    let rhs = if matches!(right_type, Type::Unknown(_) | Type::Int(_) | Type::Bool)
+                        && matches!(left_type, Type::Unknown(_))
+                    {
+                        format!("Value::Int({})", self.expr(rhs))
+                    } else {
+                        self.expr(rhs)
+                    };
+                    format!("{} {} {}", lhs, op, rhs)
+                }
             }
             ExprKind::Compare { op, lhs, rhs } => {
                 let op = match op {
@@ -790,8 +810,25 @@ impl RustEmitter<'_> {
                     gset_ir::ComparisonOp::Ge => ">=",
                     _ => return unsupported_expr(self.diagnostics, expr.span),
                 };
-                let lhs = self.expr(lhs);
-                let rhs = self.expr(rhs);
+                let left_type = lhs.ty.clone();
+                let right_type = rhs.ty.clone();
+                let lhs = match left_type {
+                    Type::Int(_) if matches!(right_type, Type::Float | Type::Unknown(_)) => {
+                        format!("Value::Int({})", self.expr(lhs))
+                    }
+                    _ => self.expr(lhs),
+                };
+                let rhs = if matches!(right_type, Type::Float | Type::Unknown(_))
+                    && matches!(left_type, Type::Int(_) | Type::Bool)
+                {
+                    format!("Value::Float({})", self.expr(rhs))
+                } else if matches!(right_type, Type::Int(_) | Type::Bool)
+                    && matches!(left_type, Type::Float | Type::Unknown(_))
+                {
+                    format!("Value::Int({})", self.expr(rhs))
+                } else {
+                    self.expr(rhs)
+                };
                 format!("{} {} {}", lhs, op, rhs)
             }
             ExprKind::Logical { op, lhs, rhs } => {
@@ -1762,12 +1799,63 @@ impl std::cmp::PartialOrd for Value {
     }
 }
 
+impl std::cmp::PartialEq<i64> for Value {
+    fn eq(&self, other: &i64) -> bool {
+        match self {
+            Value::Int(v) => *v == *other,
+            Value::Float(v) => *v == *other as f64,
+            _ => false,
+        }
+    }
+}
+
+impl std::cmp::PartialOrd<i64> for Value {
+    fn partial_cmp(&self, other: &i64) -> Option<std::cmp::Ordering> {
+        match self {
+            Value::Int(v) => v.partial_cmp(other),
+            Value::Float(v) => (*v as i64).partial_cmp(other),
+            _ => None,
+        }
+    }
+}
+
+impl std::cmp::PartialEq<Value> for i64 {
+    fn eq(&self, other: &Value) -> bool {
+        match other {
+            Value::Int(v) => *self == *v,
+            Value::Float(v) => *self as f64 == *v,
+            _ => false,
+        }
+    }
+}
+
+impl std::cmp::PartialOrd<Value> for i64 {
+    fn partial_cmp(&self, other: &Value) -> Option<std::cmp::Ordering> {
+        match other {
+            Value::Int(v) => self.partial_cmp(v),
+            Value::Float(v) => self.partial_cmp(&(*v as i64)),
+            _ => None,
+        }
+    }
+}
+
 impl Default for Value {
     fn default() -> Self { Value::Int(0) }
 }
 
 fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
 fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
+
+impl std::ops::Add<Value> for i64 {
+    type Output = Value;
+    fn add(self, rhs: Value) -> Self::Output {
+        match rhs {
+            Value::Int(r) => Value::Int(self + r),
+            Value::Float(r) => Value::Float((self as f64) + r),
+            _ => Value::Null,
+        }
+    }
+}
 
 impl std::ops::Sub<i64> for Value {
     type Output = Value;
