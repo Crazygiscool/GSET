@@ -141,7 +141,7 @@ impl RustEmitter<'_> {
                     .get(_index)
                     .and_then(|ty| ty.as_ref())
                     .map(rust_type)
-                    .unwrap_or_else(|| "i64".to_string());
+                    .unwrap_or_else(|| "Value".to_string());
                 format!("{binding}: {ty}")
             })
             .collect::<Vec<_>>()
@@ -703,6 +703,15 @@ impl RustEmitter<'_> {
                         let receiver = self.expr(receiver);
                         let arg = self.expr(&args[0]);
                         return format!("{}.starts_with({}.as_str())", receiver, arg);
+                    }
+                    "replace" if args.len() == 2 => {
+                        let receiver = self.expr(receiver);
+                        let needle = self.expr(&args[0]);
+                        let replacement = self.expr(&args[1]);
+                        return format!(
+                            r#"{}.replace(&{}.as_str(), &{}.as_str()).to_string()"#,
+                            receiver, needle, replacement
+                        );
                     }
                     "endswith" if args.len() == 1 => {
                         let receiver = self.expr(receiver);
