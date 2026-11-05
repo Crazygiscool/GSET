@@ -1291,6 +1291,19 @@ impl RustEmitter<'_> {
                     .join(", ");
                 format!("|{}| {}", params, self.expr(body))
             }
+            ExprKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition = self.truthy(condition);
+                let then_branch = self.expr(then_branch);
+                let else_branch = self.expr(else_branch);
+                return format!(
+                    "if {} {{ {} }} else {{ {} }}",
+                    condition, then_branch, else_branch
+                );
+            }
             ExprKind::Comprehension {
                 kind,
                 element,
