@@ -321,6 +321,30 @@ fn gset_value_cmp(left: Value, right: Value) -> std::cmp::Ordering {
     }
 }
 fn gset_identity(value: Value) -> Value { value }
+fn gset_in(items: Value, item: Value) -> bool {
+    match items {
+        Value::List(values) => values.iter().any(|candidate| candidate == &item),
+        Value::Str(value) => value.contains(&item.to_string()),
+        Value::Map(values) => values.contains_key(&item.to_string()),
+        _ => false,
+    }
+}
+
+fn gset_slice(value: Value, start: usize, end: usize) -> Value {
+    match value {
+        Value::List(values) => Value::List(values[start.min(values.len())..end.min(values.len())].to_vec()),
+        Value::Str(value) => Value::Str(value.chars().skip(start).take(end.saturating_sub(start)).collect()),
+        _ => Value::Null,
+    }
+}
+
+fn gset_logical_and(left: Value, right: Value) -> Value {
+    if left.gset_truthy() { right } else { left }
+}
+fn gset_logical_or(left: Value, right: Value) -> Value {
+    if left.gset_truthy() { left } else { right }
+}
+
 fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
 fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
 

@@ -893,7 +893,7 @@ impl RustEmitter<'_> {
                 Literal::Str(value) => format!("String::from({})", rust_string(value)),
                 Literal::Char(value) => value.clone(),
                 Literal::Bytes(value) => format!("\"{}\".as_bytes()", value),
-                Literal::Null => "()".to_string(),
+                Literal::Null => "Value::Null".to_string(),
             },
             ExprKind::Path(path) if path.is_bare() => {
                 let name = path
@@ -1003,6 +1003,33 @@ impl RustEmitter<'_> {
                 }
             }
             ExprKind::Compare { op, lhs, rhs } => {
+                if let gset_ir::ComparisonOp::In = op {
+                    let rust_type = rust_type(&expr.ty);
+                    let items = self.expr(rhs);
+                    let item = self.expr(lhs);
+                    if rust_type == "Value" {
+                        return format!("Value::Bool(gset_in({}, {}))", items, item);
+                    }
+                    return format!("gset_in({}, {})", items, item);
+                }
+                if matches!(op, gset_ir::ComparisonOp::Is) {
+                    let rust_type = rust_type(&expr.ty);
+                    let lhs = self.expr(lhs);
+                    let rhs = self.expr(rhs);
+                    if rust_type == "Value" {
+                        return format!("Value::Bool({} == {})", lhs, rhs);
+                    }
+                    return format!("{} == {}", lhs, rhs);
+                }
+                if matches!(op, gset_ir::ComparisonOp::IsNot) {
+                    let rust_type = rust_type(&expr.ty);
+                    let lhs = self.expr(lhs);
+                    let rhs = self.expr(rhs);
+                    if rust_type == "Value" {
+                        return format!("Value::Bool({} != {})", lhs, rhs);
+                    }
+                    return format!("{} != {}", lhs, rhs);
+                }
                 let op = match op {
                     gset_ir::ComparisonOp::Eq => "==",
                     gset_ir::ComparisonOp::Ne => "!=",
@@ -1037,14 +1064,22 @@ impl RustEmitter<'_> {
                 let has_unknown =
                     matches!(lhs.ty, Type::Unknown(_)) || matches!(rhs.ty, Type::Unknown(_));
                 if has_unknown {
-                    let lhs = self.expr(lhs);
-                    let rhs = self.expr(rhs);
+                    let lhs = wrap_rust_expr("Value", &lhs.ty, self.expr(lhs));
+                    let rhs = wrap_rust_expr("Value", &rhs.ty, self.expr(rhs));
                     match op {
                         LogicalOp::And => {
-                            format!("(gset_truthy(&{}) && gset_truthy(&{}))", lhs, rhs)
+                            if rust_type(&expr.ty) == "Value" {
+                                format!("gset_logical_and({}, {})", lhs, rhs)
+                            } else {
+                                format!("(gset_truthy(&{}) && gset_truthy(&{}))", lhs, rhs)
+                            }
                         }
                         LogicalOp::Or => {
-                            format!("(gset_truthy(&{}) || gset_truthy(&{}))", lhs, rhs)
+                            if rust_type(&expr.ty) == "Value" {
+                                format!("gset_logical_or({}, {})", lhs, rhs)
+                            } else {
+                                format!("(gset_truthy(&{}) || gset_truthy(&{}))", lhs, rhs)
+                            }
                         }
                     }
                 } else {
@@ -1187,8 +1222,12 @@ impl RustEmitter<'_> {
                     let index = self.expr(index);
                     format!("{}.get(&{}).cloned().unwrap()", target_expr, index)
                 } else if matches!(target.ty, Type::Unknown(_)) {
-                    let index = self.expr(index);
-                    format!("{}.get_index({} as usize)", target_expr, index)
+                    let index = if matches!(index.ty, Type::Unknown(_)) {
+                        format!("{}.as_int() as usize", self.expr(index))
+                    } else {
+                        format!("{} as usize", self.expr(index))
+                    };
+                    format!("{}.get_index({})", target_expr, index)
                 } else {
                     format!("{}[{} as usize]", target_expr, self.expr(index))
                 }
@@ -1566,6 +1605,7 @@ fn rust_type(ty: &Type) -> String {
                 + ","
         ),
         Type::Unknown(_) => "Value".to_string(),
+        Type::Null => "Value".to_string(),
         _ => "i64".to_string(),
     }
 }
@@ -2322,6 +2362,30 @@ fn gset_value_cmp(left: Value, right: Value) -> std::cmp::Ordering {
     }
 }
 fn gset_identity(value: Value) -> Value { value }
+fn gset_in(items: Value, item: Value) -> bool {
+    match items {
+        Value::List(values) => values.iter().any(|candidate| candidate == &item),
+        Value::Str(value) => value.contains(&item.to_string()),
+        Value::Map(values) => values.contains_key(&item.to_string()),
+        _ => false,
+    }
+}
+
+fn gset_slice(value: Value, start: usize, end: usize) -> Value {
+    match value {
+        Value::List(values) => Value::List(values[start.min(values.len())..end.min(values.len())].to_vec()),
+        Value::Str(value) => Value::Str(value.chars().skip(start).take(end.saturating_sub(start)).collect()),
+        _ => Value::Null,
+    }
+}
+
+fn gset_logical_and(left: Value, right: Value) -> Value {
+    if left.gset_truthy() { right } else { left }
+}
+fn gset_logical_or(left: Value, right: Value) -> Value {
+    if left.gset_truthy() { left } else { right }
+}
+
 fn gset_truthy(value: &Value) -> bool { value.gset_truthy() }
 fn gset_iterate(value: &Value) -> Vec<Value> { value.gset_iterate() }
 

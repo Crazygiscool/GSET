@@ -16,10 +16,10 @@ backend    lambdas
 backend    literals
 backend    loops
 ok         module_shape
-backend    null_handling
+ok         null_handling
 backend    numeric_literals
 backend    operators
 ok         returns
 backend    typed
 
-5 ok / 0 frontend / 18 backend / 0 malformed
+6 ok / 0 frontend / 17 backend / 0 malformed
