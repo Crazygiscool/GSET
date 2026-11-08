@@ -1,0 +1,7 @@
+ok         arithmetic
+ok         conditions
+ok         functions
+ok         loops
+ok         strings
+
+5 ok / 0 frontend / 0 backend / 0 malformed

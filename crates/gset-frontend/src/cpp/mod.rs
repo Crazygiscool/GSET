@@ -199,6 +199,38 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
         "compound_statement" => Some(Stmt::Block(lower_block(node, source, text))),
         "declaration" => lower_declaration(node, source, text),
         "expression_statement" => {
+            if let Some(child) = named_child(node, 0) {
+                if child.kind() == "binary_expression"
+                    && text_of(child, text).contains("cout")
+                    && text_of(child, text).contains("<<")
+                {
+                    let mut operands = Vec::new();
+                    if collect_cout_operands(child, text, &mut operands) {
+                        let args: Vec<Expr> = operands
+                            .into_iter()
+                            .filter(|expr_node| {
+                                let t = text_of(*expr_node, text).trim();
+                                t != "std::endl" && t != "endl"
+                            })
+                            .map(|expr_node| lower_expr(expr_node, source, text))
+                            .collect();
+                        if !args.is_empty() {
+                            let callee = Expr::new(
+                                ExprKind::Path(gset_ir::Path::single(Arc::from("print"))),
+                                span_of(child, source),
+                            );
+                            return Some(Stmt::Expr(Expr::new(
+                                ExprKind::Call {
+                                    callee: Box::new(callee),
+                                    args,
+                                    named_args: Vec::new(),
+                                },
+                                span_of(node, source),
+                            )));
+                        }
+                    }
+                }
+            }
             let expr = named_child(node, 0).map(|c| lower_expr(c, source, text))?;
             Some(Stmt::Expr(expr))
         }
@@ -213,6 +245,7 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
                 }
                 ci += 1;
             }
+
             Some(Stmt::Return {
                 value,
                 span: span_of(node, source),
@@ -220,7 +253,7 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
         }
         "if_statement" => {
             let condition_node = node.child_by_field_name("condition")?;
-            let condition = lower_expr(condition_node, source, text);
+            let condition = lower_condition(condition_node, source, text);
             let consequence = node.child_by_field_name("consequence")?;
             let then_branch = statement_to_block(consequence, source, text);
             let else_branch = node.child_by_field_name("alternative").and_then(|alt| {
@@ -256,7 +289,7 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
         }
         "while_statement" => {
             let condition_node = node.child_by_field_name("condition")?;
-            let condition = lower_expr(condition_node, source, text);
+            let condition = lower_condition(condition_node, source, text);
             let body_node = node.child_by_field_name("body")?;
             let body = statement_to_block(body_node, source, text);
             Some(Stmt::While {
@@ -270,7 +303,7 @@ fn lower_stmt(node: tree_sitter::Node, source: SourceId, text: &str) -> Option<S
             let body_node = node.child_by_field_name("body")?;
             let body = statement_to_block(body_node, source, text);
             let condition_node = node.child_by_field_name("condition")?;
-            let condition = lower_expr(condition_node, source, text);
+            let condition = lower_condition(condition_node, source, text);
             Some(Stmt::DoWhile {
                 body,
                 condition,
@@ -843,4 +876,75 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
         }
         _ => Expr::error(format!("unsupported C++ expression: {}", node.kind()), span),
     }
+}
+
+fn lower_condition(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
+    if node.kind() == "condition_clause" {
+        let mut current = Some(node);
+        while let Some(cur) = current {
+            let mut first = None;
+            let mut i = 0;
+            while i < cur.child_count() {
+                if let Some(child) = cur.child(i) {
+                    if child.is_named() {
+                        first = Some(child);
+                        break;
+                    }
+                }
+                i += 1;
+            }
+            match first {
+                Some(child) if child.kind() == "condition_clause" => current = Some(child),
+                Some(child) => return lower_expr(child, source, text),
+                None => return Expr::null(span_of(cur, source)),
+            }
+        }
+    }
+    lower_expr(node, source, text)
+}
+
+fn collect_cout_operands<'a>(
+    node: tree_sitter::Node<'a>,
+    text: &str,
+    out: &mut Vec<tree_sitter::Node<'a>>,
+) -> bool {
+    if node.kind() != "binary_expression" {
+        let t = text_of(node, text).trim();
+        return t == "std::cout" || t == "cout";
+    }
+    let mut lhs = None;
+    let mut rhs = None;
+    let mut op_text = "";
+    let mut ci = 0;
+    while ci < node.child_count() {
+        if let Some(c) = node.child(ci) {
+            match c.kind() {
+                "<<" => op_text = "<<",
+                _ => {
+                    if c.is_named() {
+                        if lhs.is_none() {
+                            lhs = Some(c);
+                        } else {
+                            rhs = Some(c);
+                        }
+                    }
+                }
+            }
+        }
+        ci += 1;
+    }
+    let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
+        return false;
+    };
+    if op_text != "<<" {
+        return false;
+    }
+    if !collect_cout_operands(lhs, text, out) {
+        return false;
+    }
+    let t = text_of(rhs, text).trim();
+    if t != "std::endl" && t != "endl" {
+        out.push(rhs);
+    }
+    true
 }

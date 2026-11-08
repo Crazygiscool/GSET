@@ -457,7 +457,6 @@ fn fib(n: i64) -> i64 {
     ;
     return fib(n - 1) + fib(n - 2);
 }
-
 fn main() {
     println!("{}", fib(10));
 }

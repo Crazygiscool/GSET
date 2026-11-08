@@ -42,7 +42,7 @@ pub fn discover_sources(root: &std::path::Path) -> std::io::Result<Vec<std::path
 }
 
 fn discover_into(
-    root: &std::path::Path,
+    _root: &std::path::Path,
     dir: &std::path::Path,
     out: &mut Vec<std::path::PathBuf>,
 ) -> std::io::Result<()> {
@@ -51,12 +51,12 @@ fn discover_into(
         let path = entry.path();
         if entry.file_type()?.is_dir() {
             // Skip common build artifacts and third-party directories.
-            if let Some(name) = entry.file_name().to_str() {
-                if matches!(name, "target" | "node_modules" | ".git" | "dist") {
-                    continue;
-                }
+            if let Some(name) = entry.file_name().to_str()
+                && matches!(name, "target" | "node_modules" | ".git" | "dist")
+            {
+                continue;
             }
-            discover_into(root, &path, out)?;
+            discover_into(_root, &path, out)?;
         } else if entry.file_type()?.is_file()
             && path
                 .extension()
@@ -412,25 +412,23 @@ fn discover_manifests_into(
         let entry = entry?;
         let path = entry.path();
         if entry.file_type()?.is_dir() {
-            if let Some(name) = entry.file_name().to_str() {
-                if matches!(name, "target" | "node_modules" | ".git" | "dist" | "build") {
-                    continue;
-                }
+            if let Some(name) = entry.file_name().to_str()
+                && matches!(name, "target" | "node_modules" | ".git" | "dist" | "build")
+            {
+                continue;
             }
             discover_manifests_into(root, &path, out)?;
-        } else if entry.file_type()?.is_file() {
-            if let Some(name) = entry.file_name().to_str() {
-                if let Some((_, ecosystem, rank)) = MANIFEST_FILES
-                    .iter()
-                    .find(|(candidate, _, _)| *candidate == name)
-                {
-                    out.push(DependencyManifest {
-                        ecosystem: ecosystem.clone(),
-                        path,
-                        rank: *rank,
-                    });
-                }
-            }
+        } else if entry.file_type()?.is_file()
+            && let Some(name) = entry.file_name().to_str()
+            && let Some((_, ecosystem, rank)) = MANIFEST_FILES
+                .iter()
+                .find(|(candidate, _, _)| *candidate == name)
+        {
+            out.push(DependencyManifest {
+                ecosystem: ecosystem.clone(),
+                path,
+                rank: *rank,
+            });
         }
     }
     let _ = root;
@@ -489,27 +487,27 @@ pub fn classify_import(
 /// Returns `true` when the text was recognised and `result` was populated.
 fn parse_pip_lockfile(text: &str, result: &mut Vec<(String, Option<String>)>) -> bool {
     let trimmed = text.trim();
-    if trimmed.starts_with('{') {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            let mut found = false;
-            for section in ["default", "develop"] {
-                if let Some(entries) = value.get(section).and_then(serde_json::Value::as_object) {
-                    for (name, spec) in entries {
-                        let version = spec
-                            .get("version")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_string);
-                        if !name.is_empty() {
-                            result.push((name.clone(), version));
-                            found = true;
-                        }
+    if trimmed.starts_with('{')
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+    {
+        let mut found = false;
+        for section in ["default", "develop"] {
+            if let Some(entries) = value.get(section).and_then(serde_json::Value::as_object) {
+                for (name, spec) in entries {
+                    let version = spec
+                        .get("version")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string);
+                    if !name.is_empty() {
+                        result.push((name.clone(), version));
+                        found = true;
                     }
                 }
             }
-            if found {
-                dedupe_versions(result);
-                return true;
-            }
+        }
+        if found {
+            dedupe_versions(result);
+            return true;
         }
     }
 
@@ -582,35 +580,34 @@ fn parse_pip_lockfile(text: &str, result: &mut Vec<(String, Option<String>)>) ->
             }
         }
 
-        if found == false {
-            if let Some(groups) = value
+        if !found
+            && let Some(groups) = value
                 .get("tool")
                 .and_then(toml::Value::as_table)
                 .and_then(|tool| tool.get("poetry"))
                 .and_then(toml::Value::as_table)
                 .and_then(|poetry| poetry.get("group"))
                 .and_then(toml::Value::as_table)
-            {
-                for (_, group) in groups {
-                    if let Some(dependencies) = group
-                        .as_table()
-                        .and_then(|table| table.get("dependencies"))
-                        .and_then(toml::Value::as_table)
-                    {
-                        for (name, spec) in dependencies {
-                            let version = if let toml::Value::String(version) = spec {
-                                Some(version.clone())
-                            } else if let Some(table) = spec.as_table() {
-                                table
-                                    .get("version")
-                                    .and_then(toml::Value::as_str)
-                                    .map(str::to_string)
-                            } else {
-                                None
-                            };
-                            result.push((name.clone(), version));
-                            found = true;
-                        }
+        {
+            for (_, group) in groups {
+                if let Some(dependencies) = group
+                    .as_table()
+                    .and_then(|table| table.get("dependencies"))
+                    .and_then(toml::Value::as_table)
+                {
+                    for (name, spec) in dependencies {
+                        let version = if let toml::Value::String(version) = spec {
+                            Some(version.clone())
+                        } else if let Some(table) = spec.as_table() {
+                            table
+                                .get("version")
+                                .and_then(toml::Value::as_str)
+                                .map(str::to_string)
+                        } else {
+                            None
+                        };
+                        result.push((name.clone(), version));
+                        found = true;
                     }
                 }
             }
@@ -717,7 +714,7 @@ pub fn declared_dependency_versions(
                     depth += line.chars().filter(|c| *c == '{').count()
                         - line.chars().filter(|c| *c == '}').count();
                     collect_npm_versions(trimmed, &mut result);
-                    if depth <= 0 {
+                    if depth == 0 {
                         in_dependencies = false;
                     }
                 }
@@ -744,15 +741,15 @@ pub fn declared_dependency_versions(
                         }
                     }
                 }
-                if !found {
-                    if let Some(packages) = value.get("package").and_then(toml::Value::as_array) {
-                        for package in packages {
-                            if let Some(table) = package.as_table() {
-                                let name = table.get("name").and_then(toml::Value::as_str);
-                                let version = table.get("version").and_then(toml::Value::as_str);
-                                if let Some(name) = name {
-                                    result.push((name.to_string(), version.map(str::to_string)));
-                                }
+                if !found
+                    && let Some(packages) = value.get("package").and_then(toml::Value::as_array)
+                {
+                    for package in packages {
+                        if let Some(table) = package.as_table() {
+                            let name = table.get("name").and_then(toml::Value::as_str);
+                            let version = table.get("version").and_then(toml::Value::as_str);
+                            if let Some(name) = name {
+                                result.push((name.to_string(), version.map(str::to_string)));
                             }
                         }
                     }
@@ -813,11 +810,11 @@ pub fn declared_dependency_versions(
             let mut parsed_xml = false;
             for line in text.lines() {
                 let trimmed = line.trim();
-                if let Some(rest) = trimmed.strip_prefix("<artifactId>") {
-                    if let Some(name) = rest.strip_suffix("</artifactId>") {
-                        result.push((name.trim().to_string(), None));
-                        parsed_xml = true;
-                    }
+                if let Some(rest) = trimmed.strip_prefix("<artifactId>")
+                    && let Some(name) = rest.strip_suffix("</artifactId>")
+                {
+                    result.push((name.trim().to_string(), None));
+                    parsed_xml = true;
                 }
                 if let Some(rest) = trimmed.strip_prefix("<dependency>") {
                     let _ = rest;
@@ -895,8 +892,7 @@ fn collect_npm_versions(line: &str, names: &mut Vec<(String, Option<String>)>) {
                         .trim_start_matches('"')
                         .split('"')
                         .next()
-                        .map(trim_version)
-                        .flatten();
+                        .and_then(trim_version);
                     names.push((key, version));
                 }
                 index = end + 1;
@@ -946,10 +942,10 @@ fn parse_npm_lockfile(text: &str) -> Option<Vec<(String, Option<String>)>> {
                     }
                     next += 1;
                 }
-                if let Some(name) = name {
-                    if !name.is_empty() {
-                        result.push((name, version));
-                    }
+                if let Some(name) = name
+                    && !name.is_empty()
+                {
+                    result.push((name, version));
                 }
             }
             index += 1;
@@ -975,10 +971,10 @@ fn parse_npm_lockfile(text: &str) -> Option<Vec<(String, Option<String>)>> {
                     .trim_matches('\'')
                     .trim_matches('"');
                 let (name, version) = split_pnpm_key(key);
-                if let (Some(name), Some(version)) = (name, version) {
-                    if !name.is_empty() {
-                        result.push((name, Some(version)));
-                    }
+                if let (Some(name), Some(version)) = (name, version)
+                    && !name.is_empty()
+                {
+                    result.push((name, Some(version)));
                 }
             }
         }
@@ -993,28 +989,28 @@ fn parse_npm_lockfile(text: &str) -> Option<Vec<(String, Option<String>)>> {
 
 fn split_npm_spec(spec: &str) -> (Option<String>, Option<String>) {
     // Handle scoped packages by splitting on the final '@'.
-    if spec.contains('@') && (spec.starts_with('@') || spec.rfind('@') != Some(0)) {
-        if let Some(at) = spec.rfind('@') {
-            if at > 0 {
-                return (
-                    Some(spec[..at].to_string()),
-                    Some(spec[at + 1..].to_string()),
-                );
-            }
-        }
+    if spec.contains('@')
+        && (spec.starts_with('@') || spec.rfind('@') != Some(0))
+        && let Some(at) = spec.rfind('@')
+        && at > 0
+    {
+        return (
+            Some(spec[..at].to_string()),
+            Some(spec[at + 1..].to_string()),
+        );
     }
     (Some(spec.to_string()), None)
 }
 
 fn split_pnpm_key(key: &str) -> (Option<String>, Option<String>) {
     let key = key.trim_start_matches('/');
-    if let Some(at) = key.rfind('@') {
-        if at > 0 {
-            let name = key[..at].trim_start_matches('/').to_string();
-            let version = key[at + 1..].split('/').next().unwrap_or("").to_string();
-            if !version.is_empty() {
-                return (Some(name), Some(version));
-            }
+    if let Some(at) = key.rfind('@')
+        && at > 0
+    {
+        let name = key[..at].trim_start_matches('/').to_string();
+        let version = key[at + 1..].split('/').next().unwrap_or("").to_string();
+        if !version.is_empty() {
+            return (Some(name), Some(version));
         }
     }
     // Pattern: /name/version
@@ -1046,10 +1042,7 @@ fn parse_npm_dependencies(text: &str) -> Option<Vec<(String, Option<String>)>> {
             skip_whitespace_chars(&chars, &mut index);
             continue;
         }
-        let key = match parse_json_string_chars(&chars, &mut index) {
-            Some(key) => key,
-            None => return None,
-        };
+        let key = parse_json_string_chars(&chars, &mut index)?;
         skip_whitespace_chars(&chars, &mut index);
         if index >= chars.len() || chars[index] != ':' {
             return None;
@@ -1092,10 +1085,7 @@ fn version_from_object(object: &str) -> Option<String> {
             index += 1;
             continue;
         }
-        let key = match parse_json_string_chars(&chars, &mut index) {
-            Some(key) => key,
-            None => return None,
-        };
+        let key = parse_json_string_chars(&chars, &mut index)?;
         skip_whitespace_chars(&chars, &mut index);
         if index >= chars.len() || chars[index] != ':' {
             return None;

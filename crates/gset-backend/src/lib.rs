@@ -45,6 +45,7 @@
 
 mod backend;
 mod capabilities;
+mod cpp;
 mod go;
 mod java;
 mod js;
@@ -55,6 +56,7 @@ mod target;
 mod writer;
 
 pub use backend::{Backend, Emitted, backend_by_name, backend_for, emit};
+pub use cpp::Cpp;
 pub use java::Java;
 pub use js::JavaScript;
 pub use python::Python;

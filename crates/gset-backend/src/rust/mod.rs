@@ -7,6 +7,7 @@
 #![allow(clippy::all)]
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use gset_ir::{
     BinaryOp, Block, ComprehensionKind, Else, Expr, ExprKind, Function, Item, Literal, LogicalOp,
@@ -77,12 +78,22 @@ impl Backend for Rust {
                 _ => None,
             })
             .collect();
+        let mut has_entry_main = false;
 
         let mut functions = Vec::new();
         let mut main_statements = Vec::new();
         for item in &module.items {
             match item {
-                Item::Function(function) => functions.push(function.clone()),
+                Item::Function(function) => {
+                    if function.name.to_string() == "main" {
+                        let mut renamed = function.clone();
+                        renamed.name = Arc::from("__gset_main");
+                        functions.push(renamed);
+                        has_entry_main = true;
+                    } else {
+                        functions.push(function.clone());
+                    }
+                }
                 Item::Global(global) => main_statements.push(Stmt::Decl(global.clone())),
                 Item::Stmt(statement) => main_statements.push(statement.clone()),
                 Item::Import(import) => emit_import(diagnostics, import),
@@ -130,11 +141,12 @@ impl Backend for Rust {
         for function in &functions {
             emitter.emit_function(function);
         }
-
-        emitter.writer.newline();
         emitter.writer.writeln("fn main() {");
         emitter.writer.indent();
         emitter.emit_main_statements(&main_statements);
+        if has_entry_main {
+            emitter.writer.writeln("__gset_main();");
+        }
         emitter.writer.dedent();
         emitter.writer.writeln("}");
     }
@@ -297,6 +309,7 @@ impl RustEmitter<'_> {
                     }
                 }
             }
+            Stmt::Block(block) => self.emit_block(block),
             Stmt::Expr(expr) => {
                 if let ExprKind::Literal(Literal::Str(_)) = &expr.kind {
                     return;
@@ -489,6 +502,31 @@ impl RustEmitter<'_> {
                     self.writer.writeln(";");
                 }
                 self.hoisted = previous_hoisted;
+            }
+            Stmt::For {
+                init,
+                condition,
+                update,
+                body,
+                ..
+            } => {
+                if let Some(s) = init {
+                    self.emit_stmt(s);
+                }
+                let cond = condition
+                    .as_ref()
+                    .map(|e| self.truthy(e))
+                    .unwrap_or_else(|| "true".to_string());
+                self.writer.writeln(&format!("while {} {{", cond));
+                self.writer.indent();
+                self.emit_block(body);
+                if let Some(u) = update {
+                    let r = self.expr(u);
+                    self.writer.writeln(&format!("{};", r));
+                }
+                self.writer.dedent();
+                self.writer.writeln("}");
+                self.writer.writeln(";");
             }
             Stmt::While {
                 condition, body, ..
@@ -926,6 +964,15 @@ impl RustEmitter<'_> {
                     UnaryOp::Not => format!("!{}", operand),
                     _ => unsupported_expr(self.diagnostics, expr.span),
                 }
+            }
+            ExprKind::Assign { target, value, .. } => {
+                let target_text = if let gset_ir::PatternKind::Location(expr) = &target.kind {
+                    self.expr(expr)
+                } else {
+                    pattern_binding(target)
+                };
+                let value_text = self.expr(value);
+                format!("{} = {}", target_text, value_text)
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 if *op == BinaryOp::Add

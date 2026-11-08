@@ -94,32 +94,45 @@ fn syntax_runs(target: &str, path: &Path) -> Vec<Run> {
         }],
         "go" => vec![Run {
             program: "gofmt",
-            args: vec!["-e".to_string()],
+            args: vec!["-e".to_string(), path.display().to_string()],
             current_dir: path.parent().map(PathBuf::from),
         }],
         "python" => vec![Run {
             program: "python3",
-            args: vec!["-m".to_string(), "py_compile".to_string()],
+            args: vec![
+                "-m".to_string(),
+                "py_compile".to_string(),
+                path.display().to_string(),
+            ],
             current_dir: path.parent().map(PathBuf::from),
         }],
         "javascript" => vec![Run {
             program: "node",
-            args: vec!["--check".to_string()],
+            args: vec!["--check".to_string(), path.display().to_string()],
             current_dir: path.parent().map(PathBuf::from),
         }],
         "ruby" => vec![Run {
             program: "ruby",
-            args: vec!["-c".to_string()],
+            args: vec!["-c".to_string(), path.display().to_string()],
+            current_dir: path.parent().map(PathBuf::from),
+        }],
+        "cpp" | "c++" => vec![Run {
+            program: "g++",
+            args: vec![
+                "-std=c++17".to_string(),
+                "-fsyntax-only".to_string(),
+                path.display().to_string(),
+            ],
             current_dir: path.parent().map(PathBuf::from),
         }],
         "java" => vec![Run {
             program: "javac",
-            args: vec![],
+            args: vec![path.display().to_string()],
             current_dir: path.parent().map(PathBuf::from),
         }],
         "typescript" => vec![Run {
             program: "tsc",
-            args: vec!["--noEmit".to_string()],
+            args: vec!["--noEmit".to_string(), path.display().to_string()],
             current_dir: path.parent().map(PathBuf::from),
         }],
         _ => vec![],

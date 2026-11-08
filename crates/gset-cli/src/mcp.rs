@@ -203,21 +203,31 @@ fn run_tool(name: &str, arguments: Value) -> (Value, bool) {
                 .get("source")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let dir = std::env::temp_dir().join("gset-mcp-validate");
-            let extension = match target {
-                "rust" => "rs",
-                "go" => "go",
-                "java" => "java",
-                "python" => "py",
-                "ruby" => "rb",
-                _ => "txt",
+            let Some(target_id) = gset_backend::TargetId::from_name(target) else {
+                return (
+                    json!({ "failed": true, "error": format!("unknown target {target}") }),
+                    true,
+                );
             };
-            let file = dir.join(format!("program.{}", extension));
+
+            let dir = std::env::temp_dir().join("gset-mcp-validate");
             let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(&file, source);
+            let file = dir.join(format!("program.{}", target_id.extension()));
+            if let Err(error) = std::fs::write(&file, source) {
+                return (json!({ "failed": true, "error": error.to_string() }), true);
+            }
+
+            let report = crate::validate::validate_file(target, &file);
+            let failed = report.status == crate::validate::NativeValidation::Failed;
             (
-                json!({ "status": "validated", "target": target, "source": source }),
-                false,
+                json!({
+                    "status": report.status.code(),
+                    "target": target,
+                    "source": source,
+                    "command": report.command,
+                    "stderr": report.stderr
+                }),
+                failed,
             )
         }
         "get_capability_matrix" => {

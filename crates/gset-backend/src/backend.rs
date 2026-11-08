@@ -2,6 +2,7 @@
 
 use gset_ir::{DiagnosticBag, Module, SourceMap, Span};
 
+use crate::cpp::Cpp;
 use crate::go::Go;
 use crate::java::Java;
 use crate::js::JavaScript;
@@ -130,6 +131,7 @@ pub fn backend_for(id: TargetId) -> Option<Box<dyn Backend>> {
         TargetId::JAVASCRIPT => Some(Box::new(JavaScript)),
         TargetId::RUBY => Some(Box::new(Ruby)),
         TargetId::RUST => Some(Box::new(Rust)),
+        TargetId::CPP => Some(Box::new(Cpp)),
         _ => None,
     }
 }

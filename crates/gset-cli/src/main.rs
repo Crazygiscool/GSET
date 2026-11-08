@@ -991,6 +991,8 @@ fn run_command(
         run_java(&directory, &program)
     } else if id == TargetId::RUST {
         run_rust(&directory, &program)
+    } else if id == TargetId::CPP {
+        run_cpp(&directory, &program)
     } else {
         let Some(mut command) = runtime_command(id) else {
             eprintln!("gset: running {id} is not supported yet");
@@ -1034,6 +1036,46 @@ fn runtime_command(target: TargetId) -> Option<ProcessCommand> {
         TargetId::JAVASCRIPT => Some(ProcessCommand::new("node")),
         TargetId::RUBY => Some(ProcessCommand::new("ruby")),
         _ => None,
+    }
+}
+
+fn run_cpp(directory: &Path, program: &Path) -> ExitCode {
+    let output_path = directory.join("program");
+    let compile = ProcessCommand::new("g++")
+        .current_dir(directory)
+        .arg("-std=c++17")
+        .arg(program)
+        .arg("-o")
+        .arg(&output_path)
+        .status();
+    match compile {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            return ExitCode::from(
+                status
+                    .code()
+                    .filter(|code| (0..=255).contains(code))
+                    .unwrap_or(1) as u8,
+            );
+        }
+        Err(error) => {
+            eprintln!("g++ source: {error}");
+            return ExitCode::from(127);
+        }
+    }
+
+    let execution = ProcessCommand::new(&output_path).status();
+    match execution {
+        Ok(status) => ExitCode::from(
+            status
+                .code()
+                .filter(|code| (0..=255).contains(code))
+                .unwrap_or(1) as u8,
+        ),
+        Err(error) => {
+            eprintln!("cannot run C++ output: {error}");
+            ExitCode::from(127)
+        }
     }
 }
 
