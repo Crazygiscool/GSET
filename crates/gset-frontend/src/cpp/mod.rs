@@ -412,6 +412,9 @@ fn named_child(node: tree_sitter::Node, index: usize) -> Option<tree_sitter::Nod
 fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
     let span = span_of(node, source);
     match node.kind() {
+        "true" => Expr::new(ExprKind::Literal(Literal::Bool(true)), span),
+        "false" => Expr::new(ExprKind::Literal(Literal::Bool(false)), span),
+        "NULL" | "nullptr" => Expr::new(ExprKind::Literal(Literal::Null), span),
         "identifier" => Expr::new(
             ExprKind::Path(gset_ir::Path::single(Arc::from(text_of(node, text)))),
             span,
@@ -424,10 +427,17 @@ fn lower_expr(node: tree_sitter::Node, source: SourceId, text: &str) -> Expr {
                 Expr::int(s, span)
             }
         }
-        "string_literal" => Expr::new(
-            ExprKind::Literal(Literal::Str(text_of(node, text).into())),
-            span,
-        ),
+        "string_literal" => {
+            let raw = text_of(node, text).trim();
+            let content = if (raw.starts_with('"') && raw.ends_with('"'))
+                || (raw.starts_with('\'') && raw.ends_with('\''))
+            {
+                &raw[1..raw.len().saturating_sub(1)]
+            } else {
+                raw
+            };
+            Expr::new(ExprKind::Literal(Literal::Str(content.into())), span)
+        }
         "char_literal" => Expr::new(
             ExprKind::Literal(Literal::Str(text_of(node, text).into())),
             span,
